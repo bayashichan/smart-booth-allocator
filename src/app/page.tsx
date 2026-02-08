@@ -1,65 +1,154 @@
-import Image from "next/image";
+'use client';
+
+import React, { useState } from 'react';
+import dynamic from 'next/dynamic';
+import { Booth, Obstacle } from '@/types/layout';
+import { fetchAndParseSheet } from '@/utils/csvParser';
+import { autoLayout } from '@/utils/layoutAlgorithm';
+
+const CanvasArea = dynamic(() => import('@/components/CanvasArea'), {
+  ssr: false,
+  loading: () => <div className="p-10 text-center">Loading Editor...</div>,
+});
 
 export default function Home() {
+  const [csvUrl, setCsvUrl] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // State
+  const [booths, setBooths] = useState<Booth[]>([
+    { id: '1', name: 'サンプルA', size: 1.0, category: '物販', preferences: { wall: true }, x: 1, y: 1, rotation: 0, isPlaced: true },
+    { id: '2', name: 'サンプルB', size: 2.0, category: '飲食', preferences: { wall: false }, x: 6, y: 1, rotation: 0, isPlaced: true },
+  ]);
+  const [obstacles, setObstacles] = useState<Obstacle[]>([]);
+  const [mode, setMode] = useState<'booth' | 'venue'>('booth');
+
+  const handleLoadData = async () => {
+    if (!csvUrl) return;
+    setLoading(true);
+    setError('');
+    try {
+      const data = await fetchAndParseSheet(csvUrl);
+      const initialData = data.map((b, i) => ({
+        ...b,
+        x: i % 10,
+        y: i % 10,
+        isPlaced: false
+      }));
+      setBooths(initialData);
+    } catch (err) {
+      console.error(err);
+      setError('データの読み込みに失敗しました。URLを確認してください。');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAutoLayout = () => {
+    // 簡易的にグリッドサイズを固定
+    const gridRows = 50;
+    const gridCols = 50;
+    const layoutedBooths = autoLayout(booths, gridRows, gridCols);
+    setBooths(layoutedBooths);
+  };
+
+  const handleAiLayout = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      // 障害物データも含めてAPIへ送信
+      const response = await fetch('/api/generate-layout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          booths: booths,
+          obstacles: obstacles, // 現在の障害物配置を送信
+          width: 50,
+          height: 50
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('AI配置に失敗しました');
+      }
+
+      const layoutData = await response.json();
+
+      const newBooths = booths.map(b => {
+        const aiResult = layoutData.find((res: any) => res.id === b.id);
+        if (aiResult) {
+          return { ...b, x: aiResult.x, y: aiResult.y, rotation: aiResult.rotation || 0, isPlaced: true };
+        }
+        return b;
+      });
+
+      setBooths(newBooths);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'エラーが発生しました');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="flex min-h-screen flex-col p-4 bg-gray-50">
+      <header className="mb-4 space-y-4">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Smart Booth Allocator (Prototype)</h1>
+            <p className="text-sm text-gray-500">ブースをドラッグして移動できます</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAutoLayout}
+              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition"
+            >
+              自動配置 (ルールベース)
+            </button>
+            <button
+              onClick={handleAiLayout}
+              className="px-4 py-2 bg-gradient-to-r from-indigo-500 to-pink-500 text-white rounded shadow-md hover:opacity-90 transition flex items-center gap-2"
+            >
+              ✨ AI自動配置 (Gemini)
+            </button>
+            <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">
+              保存 (未実装)
+            </button>
+          </div>
+        </div>
+
+        {/* データインポート UI */}
+        <div className="bg-white p-4 rounded shadow flex items-center gap-4">
+          <input
+            type="text"
+            placeholder="Google Sheets CSV URL (e.g. https://docs.google.com/.../pub?output=csv)"
+            className="flex-grow border border-gray-300 rounded px-3 py-2 text-sm"
+            value={csvUrl}
+            onChange={(e) => setCsvUrl(e.target.value)}
+          />
+          <button
+            onClick={handleLoadData}
+            disabled={loading}
+            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 text-sm whitespace-nowrap"
+          >
+            {loading ? '読み込み中...' : 'データをロード'}
+          </button>
+        </div>
+        {error && <p className="text-red-500 text-sm">{error}</p>}
+      </header>
+
+      <div className="flex-grow w-full h-[70vh] bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative">
+        <CanvasArea
+          booths={booths}
+          onBoothsChange={setBooths}
+          obstacles={obstacles}
+          onObstaclesChange={setObstacles}
+          mode={mode}
+          onModeChange={setMode}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }
