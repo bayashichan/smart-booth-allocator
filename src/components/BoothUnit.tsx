@@ -22,11 +22,20 @@ const LAYERS_MM = {
     staff: { depth: 900, color: '#ffecb3', label: 'スタッフ' } // 薄い黄色
 };
 
-export default function BoothUnit({ data, gridPixelSize, gridUnitMm = 450, onDragStart, onDragEnd, draggable = true }: BoothUnitProps & { gridUnitMm?: number }) {
+export default function BoothUnit({
+    data,
+    gridPixelSize,
+    gridUnitMm = 450,
+    baseTableWidthMm = 1800,
+    baseTableDepthMm = 450,
+    onDragStart,
+    onDragEnd,
+    draggable = true
+}: BoothUnitProps & { gridUnitMm?: number, baseTableWidthMm?: number, baseTableDepthMm?: number }) {
     // 幅 (mm)
     // sizeMmが指定されていればそれを使用、なければ size (倍率) から計算
-    // 1.0卓 = 1800mm幅 とする
-    const widthMm = data.sizeMm ? data.sizeMm.width : data.size * 1800;
+    // 1.0卓 = baseTableWidthMm (デフォルト1800mm) とする
+    const widthMm = data.sizeMm ? data.sizeMm.width : data.size * baseTableWidthMm;
 
     // ピクセル換算: (mm / gridUnitMm) * gridPixelSize
     const mmToPx = (mm: number) => (mm / gridUnitMm) * gridPixelSize;
@@ -35,7 +44,7 @@ export default function BoothUnit({ data, gridPixelSize, gridUnitMm = 450, onDra
 
     // 各層の高さ (ピクセル)
     // sizeMm.depth があれば、それをテーブルの奥行きとする
-    const tableDepthMm = data.sizeMm ? data.sizeMm.depth : LAYERS_MM.table.depth;
+    const tableDepthMm = data.sizeMm ? data.sizeMm.depth : baseTableDepthMm;
 
     const aisleHeight = mmToPx(LAYERS_MM.aisle.depth);
     const tableHeight = mmToPx(tableDepthMm);

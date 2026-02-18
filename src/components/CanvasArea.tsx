@@ -36,6 +36,8 @@ export default function CanvasArea({
 
     // Global Config State
     const [gridUnitMm, setGridUnitMm] = useState(450); // 1グリッド＝何mmか
+    const [baseTableWidthMm, setBaseTableWidthMm] = useState(1800); // 標準テーブル幅
+    const [baseTableDepthMm, setBaseTableDepthMm] = useState(450); // 標準テーブル奥行
 
     // Painting / Line Tool State
     const [activeTool, setActiveTool] = useState<ToolType>('none');
@@ -328,18 +330,42 @@ export default function CanvasArea({
                     </div>
                 </div>
 
-                {/* Grid Setting (Venue Mode only) */}
+                {/* Grid & Table Setting (Venue Mode) */}
                 {mode === 'venue' && (
-                    <div className="bg-white shadow-lg rounded-xl px-4 py-2 border border-gray-200 pointer-events-auto flex items-center gap-2">
-                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">1マス =</span>
-                        <input
-                            type="number"
-                            value={gridUnitMm}
-                            onChange={(e) => setGridUnitMm(Number(e.target.value))}
-                            className="w-16 text-right border rounded px-1 text-sm"
-                            step={10}
-                        />
-                        <span className="text-xs text-gray-500">mm</span>
+                    <div className="bg-white shadow-lg rounded-xl px-4 py-2 border border-gray-200 pointer-events-auto flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500 font-medium whitespace-nowrap">1マス:</span>
+                            <input
+                                type="number"
+                                value={gridUnitMm}
+                                onChange={(e) => setGridUnitMm(Number(e.target.value))}
+                                className="w-14 text-right border rounded px-1 text-sm bg-gray-50"
+                                step={10}
+                            />
+                            <span className="text-xs text-gray-500">mm</span>
+                        </div>
+                        <div className="w-px h-6 bg-gray-200"></div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500 font-medium whitespace-nowrap">基本卓:</span>
+                            <input
+                                type="number"
+                                value={baseTableWidthMm}
+                                onChange={(e) => setBaseTableWidthMm(Number(e.target.value))}
+                                className="w-14 text-right border rounded px-1 text-sm bg-gray-50"
+                                step={10}
+                                title="幅"
+                            />
+                            <span className="text-gray-400">x</span>
+                            <input
+                                type="number"
+                                value={baseTableDepthMm}
+                                onChange={(e) => setBaseTableDepthMm(Number(e.target.value))}
+                                className="w-14 text-right border rounded px-1 text-sm bg-gray-50"
+                                step={10}
+                                title="奥行"
+                            />
+                            <span className="text-xs text-gray-500">mm</span>
+                        </div>
                     </div>
                 )}
             </div>
@@ -358,7 +384,7 @@ export default function CanvasArea({
                             <div className="text-sm font-medium">
                                 {selectedBooth.sizeMm
                                     ? `${selectedBooth.sizeMm.width}mm x ${selectedBooth.sizeMm.depth}mm`
-                                    : `${selectedBooth.size}卓 (標準)`
+                                    : `${selectedBooth.size}卓 (${selectedBooth.size * baseTableWidthMm}x${baseTableDepthMm}mm)`
                                 }
                             </div>
                         </div>
@@ -368,9 +394,9 @@ export default function CanvasArea({
                                 <label className="text-xs text-gray-500 block mb-1">幅 (mm)</label>
                                 <input
                                     type="number"
-                                    value={selectedBooth.sizeMm?.width ?? (selectedBooth.size * 1800)}
-                                    onChange={(e) => updateBoothSize(selectedBooth.id, Number(e.target.value), selectedBooth.sizeMm?.depth ?? 450)}
-                                    className="w-full border rounded px-2 py-1 text-sm bg-gray-50"
+                                    value={selectedBooth.sizeMm?.width ?? (selectedBooth.size * baseTableWidthMm)}
+                                    onChange={(e) => updateBoothSize(selectedBooth.id, Number(e.target.value), selectedBooth.sizeMm?.depth ?? baseTableDepthMm)}
+                                    className={`w-full border rounded px-2 py-1 text-sm ${selectedBooth.sizeMm ? 'bg-white border-blue-300' : 'bg-gray-50'}`}
                                     step={10}
                                 />
                             </div>
@@ -378,16 +404,28 @@ export default function CanvasArea({
                                 <label className="text-xs text-gray-500 block mb-1">奥行 (mm)</label>
                                 <input
                                     type="number"
-                                    value={selectedBooth.sizeMm?.depth ?? 450}
-                                    onChange={(e) => updateBoothSize(selectedBooth.id, selectedBooth.sizeMm?.width ?? (selectedBooth.size * 1800), Number(e.target.value))}
-                                    className="w-full border rounded px-2 py-1 text-sm bg-gray-50"
+                                    value={selectedBooth.sizeMm?.depth ?? baseTableDepthMm}
+                                    onChange={(e) => updateBoothSize(selectedBooth.id, selectedBooth.sizeMm?.width ?? (selectedBooth.size * baseTableWidthMm), Number(e.target.value))}
+                                    className={`w-full border rounded px-2 py-1 text-sm ${selectedBooth.sizeMm ? 'bg-white border-blue-300' : 'bg-gray-50'}`}
                                     step={10}
                                 />
                             </div>
                         </div>
 
+                        {selectedBooth.sizeMm && (
+                            <button
+                                onClick={() => {
+                                    const newBooths = booths.map(b => b.id === selectedBooth.id ? { ...b, sizeMm: undefined } : b);
+                                    onBoothsChange(newBooths);
+                                }}
+                                className="text-xs text-blue-600 underline hover:text-blue-800"
+                            >
+                                基本サイズに戻す
+                            </button>
+                        )}
+
                         <div className="text-xs text-gray-400 mt-2">
-                            ※標準サイズ: 1.0卓=1800mm幅 / 奥行450mm
+                            ※基本サイズ: 1.0卓={baseTableWidthMm}mm幅 / 奥行{baseTableDepthMm}mm
                         </div>
                     </div>
                 </div>
@@ -625,6 +663,8 @@ export default function CanvasArea({
                                     data={booth}
                                     gridPixelSize={GRID_SIZE}
                                     gridUnitMm={gridUnitMm}
+                                    baseTableWidthMm={baseTableWidthMm}
+                                    baseTableDepthMm={baseTableDepthMm}
                                     draggable={mode === 'booth'}
                                     onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
                                 />
