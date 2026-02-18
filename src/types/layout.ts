@@ -12,6 +12,7 @@ export interface Booth {
     nearEntrance?: boolean;
     power?: boolean;
   };
+  sizeMm?: { width: number; depth: number }; // 任意のサイズ (mm)
   // 配置情報
   x: number; // グリッド座標 X
   y: number; // グリッド座標 Y

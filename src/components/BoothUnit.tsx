@@ -14,37 +14,34 @@ interface BoothUnitProps {
 
 const UNIT_GRID_SIZE = 450; // mm
 
-// 3層構造の定義 (単位: グリッド数)
-// 全体奥行き: 通路(4) + テーブル(1〜1.5) + スタッフ(2) = 約7〜8グリッド
-// ここでは簡易的に グリッド単位で定義
-// 通路: 4グリッド (180cm)
-// テーブル: 1グリッド (45cm) または 1.5グリッド (60cm)
-// スタッフ: 2グリッド (90cm)
-
-const LAYERS = {
-    aisle: { depth: 4, color: '#e0f2f1', label: '通路' }, // 薄い青緑
-    table: { depth: 1, color: '#bdbdbd', label: '机' },   // グレー
-    staff: { depth: 2, color: '#ffecb3', label: 'スタッフ' } // 薄い黄色
+// 3層構造の定義 (単位: mm)
+// 全体奥行き: 通路(1800) + テーブル(450〜600) + スタッフ(900) = 約3150〜3300mm
+const LAYERS_MM = {
+    aisle: { depth: 1800, color: '#e0f2f1', label: '通路' }, // 薄い青緑
+    table: { depth: 450, color: '#bdbdbd', label: '机' },   // グレー
+    staff: { depth: 900, color: '#ffecb3', label: 'スタッフ' } // 薄い黄色
 };
 
-export default function BoothUnit({ data, gridPixelSize, onDragStart, onDragEnd, draggable = true }: BoothUnitProps) {
-    // サイズごとの幅 (グリッド数)
-    // 0.5: 2グリッド (90cm)
-    // 1.0: 4グリッド (180cm)
-    // 2.0: 8グリッド (360cm)
-    // 3.0: 12グリッド (540cm)
-    const widthGrids = data.size * 4;
-    const widthPx = widthGrids * gridPixelSize;
+export default function BoothUnit({ data, gridPixelSize, gridUnitMm = 450, onDragStart, onDragEnd, draggable = true }: BoothUnitProps & { gridUnitMm?: number }) {
+    // 幅 (mm)
+    // sizeMmが指定されていればそれを使用、なければ size (倍率) から計算
+    // 1.0卓 = 1800mm幅 とする
+    const widthMm = data.sizeMm ? data.sizeMm.width : data.size * 1800;
+
+    // ピクセル換算: (mm / gridUnitMm) * gridPixelSize
+    const mmToPx = (mm: number) => (mm / gridUnitMm) * gridPixelSize;
+
+    const widthPx = mmToPx(widthMm);
 
     // 各層の高さ (ピクセル)
-    const aisleHeight = LAYERS.aisle.depth * gridPixelSize;
-    const tableHeight = LAYERS.table.depth * gridPixelSize;
-    const staffHeight = LAYERS.staff.depth * gridPixelSize;
+    // sizeMm.depth があれば、それをテーブルの奥行きとする
+    const tableDepthMm = data.sizeMm ? data.sizeMm.depth : LAYERS_MM.table.depth;
 
-    const totalHeight = aisleHeight + tableHeight + staffHeight;
+    const aisleHeight = mmToPx(LAYERS_MM.aisle.depth);
+    const tableHeight = mmToPx(tableDepthMm);
+    const staffHeight = mmToPx(LAYERS_MM.staff.depth);
 
-    // 中心座標合わせのためのオフセット (KonvaのGroupは左上が原点だが、グリッド吸着のために調整が必要かも)
-    // 一旦左上原点で実装
+    // const totalHeight = aisleHeight + tableHeight + staffHeight;
 
     return (
         <Group
@@ -61,7 +58,7 @@ export default function BoothUnit({ data, gridPixelSize, onDragStart, onDragEnd,
                 y={0}
                 width={widthPx}
                 height={aisleHeight}
-                fill={LAYERS.aisle.color}
+                fill={LAYERS_MM.aisle.color}
                 stroke="#ccc"
                 strokeWidth={1}
             />
@@ -79,7 +76,7 @@ export default function BoothUnit({ data, gridPixelSize, onDragStart, onDragEnd,
                 y={aisleHeight}
                 width={widthPx}
                 height={tableHeight}
-                fill={LAYERS.table.color}
+                fill={LAYERS_MM.table.color}
                 stroke="#666"
                 strokeWidth={1}
             />
@@ -90,7 +87,7 @@ export default function BoothUnit({ data, gridPixelSize, onDragStart, onDragEnd,
                 y={aisleHeight + tableHeight}
                 width={widthPx}
                 height={staffHeight}
-                fill={LAYERS.staff.color}
+                fill={LAYERS_MM.staff.color}
                 stroke="#ccc"
                 strokeWidth={1}
             />
@@ -109,7 +106,7 @@ export default function BoothUnit({ data, gridPixelSize, onDragStart, onDragEnd,
                 x={0}
                 y={aisleHeight + tableHeight + 20}
                 width={widthPx}
-                text={`${data.size}卓`}
+                text={data.sizeMm ? `${data.sizeMm.width}x${data.sizeMm.depth}mm` : `${data.size}卓`}
                 fontSize={10}
                 align="center"
                 fill="#666"

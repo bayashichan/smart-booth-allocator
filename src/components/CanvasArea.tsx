@@ -1,12 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Stage, Layer, Line, Rect, Image as KonvaImage, Transformer } from 'react-konva';
+import { Stage, Layer, Line, Rect, Group, Image as KonvaImage, Transformer } from 'react-konva';
 import BoothUnit from './BoothUnit';
 import ObstacleComponent from './ObstacleComponent';
 import { Booth, Obstacle } from '@/types/layout';
 
-const GRID_SIZE = 40; // 画面上の1グリッドのピクセルサイズ
+const GRID_SIZE = 40; // 画面上の1グリッドのピクセルサイズ (表示用スケール基準)
 
 interface CanvasAreaProps {
     booths: Booth[];
@@ -34,6 +34,9 @@ export default function CanvasArea({
     const [stageScale, setStageScale] = useState(1);
     const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
+    // Global Config State
+    const [gridUnitMm, setGridUnitMm] = useState(450); // 1グリッド＝何mmか
+
     // Painting / Line Tool State
     const [activeTool, setActiveTool] = useState<ToolType>('none');
     const isPaintingRef = useRef(false);
@@ -42,6 +45,9 @@ export default function CanvasArea({
 
     // Obstacle editing state
     const [selectedObstacleId, setSelectedObstacleId] = useState<string | null>(null);
+
+    // Booth editing state
+    const [selectedBoothId, setSelectedBoothId] = useState<string | null>(null);
 
     // Background Image State
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
@@ -69,9 +75,7 @@ export default function CanvasArea({
         };
 
         window.addEventListener('resize', updateSize);
-        // Initial call
         updateSize();
-        // A small delay to ensure layout is settled
         setTimeout(updateSize, 100);
 
         return () => window.removeEventListener('resize', updateSize);
@@ -84,11 +88,7 @@ export default function CanvasArea({
             setSelectedObstacleId(null);
             setIsBgEditing(false); // ブースモードでは背景編集オフ
         } else {
-            // Check current tool, if none maybe keep or set to wall? Let's just reset if coming from booth?
-            // Usually fine to keep current state unless specifically needed.
-            if (activeTool === 'none' && !isBgEditing) {
-                // setActiveTool('wall'); // Optional: force wall tool on venue mode entry
-            }
+            setSelectedBoothId(null); // 会場モードではブース選択解除
         }
     }, [mode]);
 
@@ -104,17 +104,16 @@ export default function CanvasArea({
             img.src = event.target?.result as string;
             img.onload = () => {
                 setBgImage(img);
-                // 初期位置：中央付近
                 setBgConfig({
                     x: 100,
                     y: 100,
-                    scaleX: 1, // 初期スケール
+                    scaleX: 1,
                     scaleY: 1,
                     rotation: 0,
                     opacity: 0.5
                 });
-                setIsBgEditing(true); // アップロード直後は編集モードに
-                setActiveTool('none'); // ペンはオフに
+                setIsBgEditing(true);
+                setActiveTool('none');
             };
         };
         reader.readAsDataURL(file);
@@ -154,7 +153,6 @@ export default function CanvasArea({
 
     // --- Obstacle Logic ---
 
-    // 指定座標(gx, gy)にある障害物を探す
     const findObstacleAt = (gx: number, gy: number) => {
         return obstacles.find(obs =>
             gx >= obs.x && gx < obs.x + obs.width &&
@@ -183,14 +181,21 @@ export default function CanvasArea({
     };
 
     const handleMouseDown = (e: any) => {
-        if (isBgEditing) return; // Background editing takes precedence
-
         const stage = e.target.getStage();
         if (!stage) return;
 
-        // ツールが選択されていない場合はステージドラッグ (Stage definition handles draggable)
+        // 背景クリックで選択解除
+        const clickedOnStage = e.target === stage;
+        if (clickedOnStage) {
+            setSelectedBoothId(null);
+            setSelectedObstacleId(null);
+        }
+
+        if (isBgEditing) return;
+
+        // ツールが選択されていない場合はステージドラッグ
         if (mode === 'venue' && activeTool === 'none') {
-            setSelectedObstacleId(null); // 障害物選択解除
+            setSelectedObstacleId(null);
             return;
         }
 
@@ -201,11 +206,9 @@ export default function CanvasArea({
                 const { gx, gy } = getGridPos(pos.x, pos.y);
                 dragStartRef.current = { gx, gy };
 
-                // 消しゴムの場合は即座に消していく（なぞり消し）
                 if (activeTool === 'eraser') {
                     handleEraser(gx, gy);
                 } else {
-                    // 壁・柱の場合はプレビュー開始
                     setPreviewRect({ x: gx, y: gy, w: 1, h: 1 });
                 }
             }
@@ -226,7 +229,6 @@ export default function CanvasArea({
             if (activeTool === 'eraser') {
                 handleEraser(gx, gy);
             } else if (dragStartRef.current) {
-                // 壁・柱：ドラッグ領域の計算
                 const startX = Math.min(dragStartRef.current.gx, gx);
                 const startY = Math.min(dragStartRef.current.gy, gy);
                 const endX = Math.max(dragStartRef.current.gx, gx);
@@ -240,7 +242,6 @@ export default function CanvasArea({
 
     const handleMouseUp = () => {
         if (isPaintingRef.current && mode === 'venue' && activeTool !== 'eraser' && previewRect) {
-            // 矩形・直線確定
             const obstacleType = (activeTool === 'wall' || activeTool === 'column') ? activeTool : 'wall';
             const newObstacle: Obstacle = {
                 id: `obs-${Date.now()}`,
@@ -287,33 +288,158 @@ export default function CanvasArea({
         e.target.to({ x: x * GRID_SIZE, y: y * GRID_SIZE, duration: 0.1 });
     };
 
+    // Booth Click Handler (for selection)
+    const handleBoothClick = (e: any, boothId: string) => {
+        if (mode === 'booth') {
+            e.cancelBubble = true;
+            setSelectedBoothId(boothId);
+        }
+    };
+
+    // Update Booth Size
+    const updateBoothSize = (boothId: string, width: number, depth: number) => {
+        const newBooths = booths.map(b =>
+            b.id === boothId ? { ...b, sizeMm: { width, depth } } : b
+        );
+        onBoothsChange(newBooths);
+    };
+
+    const selectedBooth = booths.find(b => b.id === selectedBoothId);
+
     return (
         <div ref={containerRef} className="bg-white flex flex-col h-full w-full relative">
 
-            {/* Mode Toggle */}
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10 bg-white shadow-lg rounded-full px-4 py-2 flex gap-4 items-center border border-gray-200">
-                <div className="flex bg-gray-100 rounded-full p-1">
-                    <button
-                        onClick={() => onModeChange('booth')}
-                        className={`px-4 py-1 rounded-full text-sm font-medium transition ${mode === 'booth' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-                    >
-                        ブース配置
-                    </button>
-                    <button
-                        onClick={() => onModeChange('venue')}
-                        className={`px-4 py-1 rounded-full text-sm font-medium transition ${mode === 'venue' ? 'bg-white shadow text-orange-600' : 'text-gray-500 hover:text-gray-700'}`}
-                    >
-                        会場編集
-                    </button>
+            {/* Mode & Global Settings */}
+            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10 flex gap-4 items-start pointer-events-none">
+                <div className="bg-white shadow-lg rounded-full px-4 py-2 flex gap-4 items-center border border-gray-200 pointer-events-auto">
+                    <div className="flex bg-gray-100 rounded-full p-1">
+                        <button
+                            onClick={() => onModeChange('booth')}
+                            className={`px-4 py-1 rounded-full text-sm font-medium transition ${mode === 'booth' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            ブース配置
+                        </button>
+                        <button
+                            onClick={() => onModeChange('venue')}
+                            className={`px-4 py-1 rounded-full text-sm font-medium transition ${mode === 'venue' ? 'bg-white shadow text-orange-600' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            会場編集
+                        </button>
+                    </div>
                 </div>
+
+                {/* Grid Setting (Venue Mode only) */}
+                {mode === 'venue' && (
+                    <div className="bg-white shadow-lg rounded-xl px-4 py-2 border border-gray-200 pointer-events-auto flex items-center gap-2">
+                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">1マス =</span>
+                        <input
+                            type="number"
+                            value={gridUnitMm}
+                            onChange={(e) => setGridUnitMm(Number(e.target.value))}
+                            className="w-16 text-right border rounded px-1 text-sm"
+                            step={10}
+                        />
+                        <span className="text-xs text-gray-500">mm</span>
+                    </div>
+                )}
             </div>
+
+            {/* Booth Edit Panel (When Selected) */}
+            {selectedBooth && mode === 'booth' && (
+                <div className="absolute top-20 right-4 z-20 bg-white shadow-xl rounded-xl p-4 border border-blue-100 w-64 animate-in slide-in-from-right-4">
+                    <div className="flex justify-between items-center mb-2 border-b pb-2">
+                        <h3 className="font-bold text-gray-700 truncate">{selectedBooth.name}</h3>
+                        <button onClick={() => setSelectedBoothId(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+                    </div>
+
+                    <div className="space-y-3">
+                        <div>
+                            <label className="text-xs text-gray-500 block mb-1">現在のサイズ</label>
+                            <div className="text-sm font-medium">
+                                {selectedBooth.sizeMm
+                                    ? `${selectedBooth.sizeMm.width}mm x ${selectedBooth.sizeMm.depth}mm`
+                                    : `${selectedBooth.size}卓 (標準)`
+                                }
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="text-xs text-gray-500 block mb-1">幅 (mm)</label>
+                                <input
+                                    type="number"
+                                    value={selectedBooth.sizeMm?.width ?? (selectedBooth.size * 1800)}
+                                    onChange={(e) => updateBoothSize(selectedBooth.id, Number(e.target.value), selectedBooth.sizeMm?.depth ?? 450)}
+                                    className="w-full border rounded px-2 py-1 text-sm bg-gray-50"
+                                    step={10}
+                                />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-500 block mb-1">奥行 (mm)</label>
+                                <input
+                                    type="number"
+                                    value={selectedBooth.sizeMm?.depth ?? 450}
+                                    onChange={(e) => updateBoothSize(selectedBooth.id, selectedBooth.sizeMm?.width ?? (selectedBooth.size * 1800), Number(e.target.value))}
+                                    className="w-full border rounded px-2 py-1 text-sm bg-gray-50"
+                                    step={10}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="text-xs text-gray-400 mt-2">
+                            ※標準サイズ: 1.0卓=1800mm幅 / 奥行450mm
+                        </div>
+                    </div>
+                </div>
+            )}
+
 
             {/* Venue Editing Toolbar */}
             {mode === 'venue' && (
-                <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-10 bg-white/90 backdrop-blur shadow-xl rounded-xl p-2 flex gap-2 border border-orange-100 animate-in slide-in-from-top-4 items-center">
+                <div className="absolute top-20 left-4 z-10 bg-white/90 backdrop-blur shadow-xl rounded-xl p-2 flex flex-col gap-2 border border-orange-100 animate-in slide-in-from-left-4 items-center">
+
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setActiveTool('none')}
+                            className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'none' && !isBgEditing ? 'bg-gray-200 ring-2 ring-gray-300' : 'hover:bg-gray-100'}`}
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-gray-700 mb-1">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5v15m7.5-15v15M3 10.5h18M3 16.5h18" />
+                            </svg>
+                            <span className="text-[10px] font-medium text-gray-700 leading-tight text-center">移動</span>
+                        </button>
+
+                        <div className="w-px bg-gray-300 h-full mx-1"></div>
+
+                        <button
+                            onClick={() => { setActiveTool('wall'); setIsBgEditing(false); }}
+                            className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'wall' ? 'bg-orange-100 ring-2 ring-orange-300' : 'hover:bg-gray-100'}`}
+                        >
+                            <div className="w-6 h-6 bg-gray-600 mb-1 border border-gray-700"></div>
+                            <span className="text-[10px] font-medium text-gray-700 leading-tight text-center">壁ペン</span>
+                        </button>
+
+                        <button
+                            onClick={() => { setActiveTool('column'); setIsBgEditing(false); }}
+                            className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'column' ? 'bg-orange-100 ring-2 ring-orange-300' : 'hover:bg-gray-100'}`}
+                        >
+                            <div className="w-6 h-6 bg-[#795548] mb-1 border border-gray-700"></div>
+                            <span className="text-[10px] font-medium text-gray-700 leading-tight text-center">柱ペン</span>
+                        </button>
+
+                        <button
+                            onClick={() => { setActiveTool('eraser'); setIsBgEditing(false); }}
+                            className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'eraser' ? 'bg-red-100 ring-2 ring-red-300' : 'hover:bg-gray-100'}`}
+                        >
+                            <div className="w-6 h-6 mb-1 text-red-500 border border-current rounded flex items-center justify-center">✕</div>
+                            <span className="text-[10px] font-medium text-red-600 leading-tight text-center">消しゴム</span>
+                        </button>
+                    </div>
+
+                    <div className="h-px bg-gray-300 w-full my-1"></div>
 
                     {/* 背景画像操作セクション */}
-                    <div className="flex items-center gap-1 border-r border-gray-300 pr-2 mr-2">
+                    <div className="flex items-center gap-1 w-full justify-center">
                         <label className="flex flex-col items-center p-2 hover:bg-gray-100 rounded cursor-pointer w-16" title="下絵を読み込む">
                             <input type="file" accept="image/*" className="hidden" onChange={handleBgUpload} />
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-gray-600 mb-1">
@@ -352,45 +478,13 @@ export default function CanvasArea({
                             </>
                         )}
                     </div>
+                </div>
+            )}
 
-                    <button
-                        onClick={() => { setActiveTool('none'); setIsBgEditing(false); }}
-                        className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'none' && !isBgEditing ? 'bg-gray-200 ring-2 ring-gray-300' : 'hover:bg-gray-100'}`}
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-gray-700 mb-1">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5v15m7.5-15v15M3 10.5h18M3 16.5h18" />
-                        </svg>
-                        <span className="text-[10px] font-medium text-gray-700 leading-tight text-center">移動</span>
-                    </button>
-
-                    <button
-                        onClick={() => { setActiveTool('wall'); setIsBgEditing(false); }}
-                        className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'wall' ? 'bg-orange-100 ring-2 ring-orange-300' : 'hover:bg-gray-100'}`}
-                    >
-                        <div className="w-6 h-6 bg-gray-600 mb-1 border border-gray-700"></div>
-                        <span className="text-[10px] font-medium text-gray-700 leading-tight text-center">壁ペン</span>
-                    </button>
-
-                    <button
-                        onClick={() => { setActiveTool('column'); setIsBgEditing(false); }}
-                        className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'column' ? 'bg-orange-100 ring-2 ring-orange-300' : 'hover:bg-gray-100'}`}
-                    >
-                        <div className="w-6 h-6 bg-[#795548] mb-1 border border-gray-700"></div>
-                        <span className="text-[10px] font-medium text-gray-700 leading-tight text-center">柱ペン</span>
-                    </button>
-
-                    <button
-                        onClick={() => { setActiveTool('eraser'); setIsBgEditing(false); }}
-                        className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'eraser' ? 'bg-red-100 ring-2 ring-red-300' : 'hover:bg-gray-100'}`}
-                    >
-                        <div className="w-6 h-6 mb-1 text-red-500 border border-current rounded flex items-center justify-center">✕</div>
-                        <span className="text-[10px] font-medium text-red-600 leading-tight text-center">消しゴム</span>
-                    </button>
-
-                    <div className="w-px bg-gray-300 h-8 mx-1"></div>
-
-                    {/* AI Scan Button */}
-                    <label className="flex flex-col items-center p-2 hover:bg-blue-50 rounded cursor-pointer relative group w-16">
+            {/* AI Scan Button - Bottom Right */}
+            {mode === 'venue' && (
+                <div className="absolute bottom-4 right-4 z-10">
+                    <label className="flex items-center gap-2 p-3 bg-white hover:bg-blue-50 rounded-full shadow-lg cursor-pointer border border-blue-100 transition-all">
                         <input
                             type="file"
                             accept="image/*"
@@ -421,21 +515,21 @@ export default function CanvasArea({
                                 }
                             }}
                         />
-                        <div className="text-blue-500 mb-1">
+                        <div className="text-blue-500">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
                             </svg>
                         </div>
-                        <span className="text-[10px] font-medium text-blue-600 leading-tight text-center">AI解析</span>
+                        <span className="font-bold text-blue-600">AI自動解析</span>
                     </label>
                 </div>
             )}
 
+
             {/* Instruction Toast */}
             {mode === 'venue' && (
-                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-full text-sm pointer-events-none animate-pulse z-20">
-                    {isBgEditing ? '下絵をドラッグ/拡大縮小してグリッドに合わせてください' : activeTool !== 'none' ? 'ドラッグしてなぞると連続配置できます' : '移動モード: 左上のツールを選択してください'}
+                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-full text-sm pointer-events-none animate-pulse z-20 whitespace-nowrap">
+                    {isBgEditing ? '下絵を調整中：グリッドに合わせてください' : activeTool !== 'none' ? 'ドラッグしてなぞると連続配置できます' : '移動モード'}
                 </div>
             )}
 
@@ -523,13 +617,33 @@ export default function CanvasArea({
                     <Layer opacity={mode === 'venue' ? 0.3 : 1}>
                         {/* ブース */}
                         {booths.map(booth => (
-                            <BoothUnit
+                            <Group
                                 key={booth.id}
-                                data={booth}
-                                gridPixelSize={GRID_SIZE}
-                                draggable={mode === 'booth'}
-                                onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
-                            />
+                                onClick={(e) => handleBoothClick(e, booth.id)}
+                            >
+                                <BoothUnit
+                                    data={booth}
+                                    gridPixelSize={GRID_SIZE}
+                                    gridUnitMm={gridUnitMm}
+                                    draggable={mode === 'booth'}
+                                    onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
+                                />
+                                {/* 選択時の枠線 */}
+                                {selectedBoothId === booth.id && (
+                                    <Rect
+                                        x={booth.x * GRID_SIZE}
+                                        y={booth.y * GRID_SIZE}
+                                        width={(booth.sizeMm?.width ?? (booth.size * 1800)) / gridUnitMm * GRID_SIZE}
+                                        height={(
+                                            (1800 + (booth.sizeMm?.depth ?? 450) + 900) / gridUnitMm * GRID_SIZE
+                                        )}
+                                        stroke="#2196f3"
+                                        strokeWidth={2}
+                                        listening={false}
+                                        dash={[5, 5]}
+                                    />
+                                )}
+                            </Group>
                         ))}
                     </Layer>
                 </Stage>
@@ -537,3 +651,5 @@ export default function CanvasArea({
         </div>
     );
 }
+
+
