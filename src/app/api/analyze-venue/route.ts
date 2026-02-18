@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
         // Markdown除去 & JSONパース
         const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
         // Geminiがたまに余計なテキストをつける場合があるので、配列部分だけ抽出する簡易ロジック
-        const arrayMatch = jsonStr.match(/\[.*\]/s);
+        const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
         const validJson = arrayMatch ? arrayMatch[0] : '[]';
 
         const obstacles = JSON.parse(validJson);
