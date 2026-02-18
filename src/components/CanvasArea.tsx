@@ -33,9 +33,14 @@ export default function CanvasArea({
     const [stageScale, setStageScale] = useState(1);
     const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
-    // Painting State
+    // Painting / Line Tool State
     const [activeTool, setActiveTool] = useState<ToolType>('none');
     const isPaintingRef = useRef(false);
+    const dragStartRef = useRef<{ gx: number, gy: number } | null>(null);
+    const [previewRect, setPreviewRect] = useState<{ x: number, y: number, w: number, h: number } | null>(null);
+
+    // Obstacle editing state
+    const [selectedObstacleId, setSelectedObstacleId] = useState<string | null>(null);
 
     useEffect(() => {
         setDimensions({
@@ -58,6 +63,7 @@ export default function CanvasArea({
     useEffect(() => {
         if (mode === 'booth') {
             setActiveTool('none');
+            setSelectedObstacleId(null); // ブースモードでは障害物選択を解除
         } else {
             setActiveTool('wall'); // デフォルトで壁ペンを持たせる
         }
@@ -85,66 +91,92 @@ export default function CanvasArea({
         );
     };
 
-    // グリッドを塗りつぶす / 消す
-    const paintGrid = (stageX: number, stageY: number) => {
-        if (mode !== 'venue' || activeTool === 'none') return;
+    // グリッドを塗りつぶす (単一点) - この関数は直線ツール導入により使われなくなるが、もしフリーハンドペンが必要なら残す
+    // const paintGrid = (stageX: number, stageY: number) => {
+    //     if (mode !== 'venue' || activeTool === 'none') return;
 
-        // ステージ座標からグリッド座標へ変換
-        const gx = Math.floor((stageX - stagePos.x) / (stageScale * GRID_SIZE));
-        const gy = Math.floor((stageY - stagePos.y) / (stageScale * GRID_SIZE));
+    //     // ステージ座標からグリッド座標へ変換
+    //     const gx = Math.floor((stageX - stagePos.x) / (stageScale * GRID_SIZE));
+    //     const gy = Math.floor((stageY - stagePos.y) / (stageScale * GRID_SIZE));
 
-        if (gx < 0 || gy < 0) return;
+    //     if (gx < 0 || gy < 0) return;
 
-        const existingObs = findObstacleAt(gx, gy);
+    //     const existingObs = findObstacleAt(gx, gy);
 
-        if (activeTool === 'eraser') {
-            if (existingObs) {
-                // 既存の障害物を削除するが、1x1単位で消すために、
-                // もし大きな矩形(2x2以上など)だった場合は分割するか、単純にそのオブジェクトごと消すか。
-                // ここではシンプルに「その座標を含むオブジェクトを削除」する。
-                // ※ユーザー体験としては「塗りつぶし」なので、部分削除が望ましいが、矩形管理だと複雑になるため
-                // 一旦「オブジェクト単位」での削除とする。
-                // 改善案: ヒットしたオブジェクトが1x1より大きい場合、そのグリッド部分だけ穴を開ける（＝分割する）処理が必要だが、
-                // 今回は「塗りつぶしモード」で作成されたものは基本的に1x1の集合になると仮定し、
-                // 大きなオブジェクトも一括削除で許容する。
-                onObstaclesChange(obstacles.filter(o => o.id !== existingObs.id));
-            }
-        } else {
-            // wall または column
-            if (!existingObs) {
-                // 新規作成 (1x1)
-                const newObstacle: Obstacle = {
-                    id: `obs-${Date.now()}-${gx}-${gy}`,
-                    x: gx,
-                    y: gy,
-                    width: 1, // 1グリッド
-                    height: 1, // 1グリッド
-                    rotation: 0,
-                    type: activeTool,
-                };
-                onObstaclesChange([...obstacles, newObstacle]);
-            } else {
-                // 既に別のタイプがある場合は上書きするか？
-                // 同じタイプなら何もしない、違うタイプなら書き換え
-                if (existingObs.type !== activeTool) {
-                    const updated = obstacles.map(o => o.id === existingObs.id ? { ...o, type: activeTool } : o);
-                    onObstaclesChange(updated);
-                }
-            }
-        }
+    //     if (activeTool === 'eraser') {
+    //         if (existingObs) {
+    //             onObstaclesChange(obstacles.filter(o => o.id !== existingObs.id));
+    //         }
+    //     } else {
+    //         // wall または column
+    //         if (!existingObs) {
+    //             // 新規作成 (1x1)
+    //             const newObstacle: Obstacle = {
+    //                 id: `obs-${Date.now()}-${gx}-${gy}`,
+    //                 x: gx,
+    //                 y: gy,
+    //                 width: 1, // 1グリッド
+    //                 height: 1, // 1グリッド
+    //                 rotation: 0,
+    //                 type: activeTool,
+    //             };
+    //             onObstaclesChange([...obstacles, newObstacle]);
+    //         } else {
+    //             // 既に別のタイプがある場合は上書きするか？
+    //             // 同じタイプなら何もしない、違うタイプなら書き換え
+    //             if (existingObs.type !== activeTool) {
+    //                 const updated = obstacles.map(o => o.id === existingObs.id ? { ...o, type: activeTool } : o);
+    //                 onObstaclesChange(updated);
+    //             }
+    //         }
+    //     }
+    // };
+
+    const handleObstacleChange = (updatedObstacle: Obstacle) => {
+        onObstaclesChange(obstacles.map(obs => obs.id === updatedObstacle.id ? updatedObstacle : obs));
     };
 
     // --- Mouse / Touch Handlers for Stage ---
+
+    const getGridPos = (stageX: number, stageY: number) => {
+        return {
+            gx: Math.floor((stageX - stagePos.x) / (stageScale * GRID_SIZE)),
+            gy: Math.floor((stageY - stagePos.y) / (stageScale * GRID_SIZE))
+        };
+    };
 
     const handleMouseDown = (e: any) => {
         const stage = e.target.getStage();
         if (!stage) return;
 
-        // Venurモードかつツール選択中のみ描画開始
+        // ツールが選択されていない場合はステージドラッグ
+        if (mode === 'venue' && activeTool === 'none') {
+            setSelectedObstacleId(null); // 障害物選択解除
+            return;
+        }
+
         if (mode === 'venue' && activeTool !== 'none') {
             isPaintingRef.current = true;
             const pos = stage.getPointerPosition();
-            if (pos) paintGrid(pos.x, pos.y);
+            if (pos) {
+                const { gx, gy } = getGridPos(pos.x, pos.y);
+                dragStartRef.current = { gx, gy };
+
+                // 消しゴムの場合は即座に消していく（なぞり消し）
+                if (activeTool === 'eraser') {
+                    handleEraser(gx, gy);
+                } else {
+                    // 壁・柱の場合はプレビュー開始
+                    setPreviewRect({ x: gx, y: gy, w: 1, h: 1 });
+                }
+            }
+        }
+    };
+
+    const handleEraser = (gx: number, gy: number) => {
+        const existingObs = findObstacleAt(gx, gy);
+        if (existingObs) {
+            onObstaclesChange(obstacles.filter(o => o.id !== existingObs.id));
         }
     };
 
@@ -154,12 +186,43 @@ export default function CanvasArea({
 
         if (isPaintingRef.current && mode === 'venue') {
             const pos = stage.getPointerPosition();
-            if (pos) paintGrid(pos.x, pos.y);
+            if (!pos) return;
+            const { gx, gy } = getGridPos(pos.x, pos.y);
+
+            if (activeTool === 'eraser') {
+                handleEraser(gx, gy);
+            } else if (dragStartRef.current) {
+                // 壁・柱：ドラッグ領域の計算
+                const startX = Math.min(dragStartRef.current.gx, gx);
+                const startY = Math.min(dragStartRef.current.gy, gy);
+                const endX = Math.max(dragStartRef.current.gx, gx);
+                const endY = Math.max(dragStartRef.current.gy, gy);
+                const w = endX - startX + 1;
+                const h = endY - startY + 1;
+                setPreviewRect({ x: startX, y: startY, w, h });
+            }
         }
     };
 
     const handleMouseUp = () => {
+        if (isPaintingRef.current && mode === 'venue' && activeTool !== 'eraser' && previewRect) {
+            // 矩形・直線確定
+            const obstacleType = (activeTool === 'wall' || activeTool === 'column') ? activeTool : 'wall';
+            const newObstacle: Obstacle = {
+                id: `obs-${Date.now()}`,
+                x: previewRect.x,
+                y: previewRect.y,
+                width: previewRect.w,
+                height: previewRect.h,
+                rotation: 0,
+                type: obstacleType,
+            };
+            onObstaclesChange([...obstacles, newObstacle]);
+        }
+
         isPaintingRef.current = false;
+        dragStartRef.current = null;
+        setPreviewRect(null);
     };
 
     // ズーム操作
@@ -214,6 +277,17 @@ export default function CanvasArea({
             {/* Venue Editing Toolbar */}
             {mode === 'venue' && (
                 <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-10 bg-white/90 backdrop-blur shadow-xl rounded-xl p-2 flex gap-2 border border-orange-100 animate-in slide-in-from-top-4 items-center">
+                    <button
+                        onClick={() => setActiveTool('none')}
+                        className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'none' ? 'bg-gray-200 ring-2 ring-gray-300' : 'hover:bg-gray-100'}`}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-gray-700 mb-1">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5v15m7.5-15v15M3 10.5h18M3 16.5h18" />
+                        </svg>
+                        <span className="text-xs font-medium text-gray-700">移動</span>
+                    </button>
+
+                    <div className="w-px bg-gray-300 h-8 mx-1"></div>
 
                     <button
                         onClick={() => setActiveTool('wall')}
@@ -287,14 +361,14 @@ export default function CanvasArea({
             )}
 
             {/* Instruction Toast */}
-            {mode === 'venue' && (
+            {mode === 'venue' && activeTool !== 'none' && (
                 <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-full text-sm pointer-events-none animate-pulse">
                     ドラッグしてなぞると連続配置できます
                 </div>
             )}
 
             {/* Canvas */}
-            <div className="flex-grow overflow-hidden cursor-crosshair">
+            <div className="flex-grow overflow-hidden" style={{ cursor: mode === 'venue' && activeTool !== 'none' ? 'crosshair' : 'grab' }}>
                 <Stage
                     width={dimensions.width}
                     height={dimensions.height}
@@ -323,12 +397,27 @@ export default function CanvasArea({
                             <ObstacleComponent
                                 key={obs.id}
                                 data={obs}
-                                isSelected={false} // 塗りつぶしモードでは選択状態は不要
-                                isEditable={false} // ドラッグ移動はさせない
-                                onSelect={() => { }}
-                                onChange={() => { }}
+                                gridPixelSize={GRID_SIZE} // 追加: グリッドサイズを渡す
+                                isSelected={selectedObstacleId === obs.id}
+                                isEditable={mode === 'venue' && activeTool === 'none'} // ツール選択中は移動不可に
+                                onSelect={() => { if (mode === 'venue' && activeTool === 'none') setSelectedObstacleId(obs.id); }}
+                                onChange={handleObstacleChange}
                             />
                         ))}
+                        {/* 描画中のプレビュー */}
+                        {previewRect && (
+                            <Rect
+                                x={previewRect.x * GRID_SIZE}
+                                y={previewRect.y * GRID_SIZE}
+                                width={previewRect.w * GRID_SIZE}
+                                height={previewRect.h * GRID_SIZE}
+                                fill={activeTool === 'wall' ? '#607d8b' : '#795548'}
+                                opacity={0.5}
+                                stroke="#2196f3"
+                                strokeWidth={2}
+                                dash={[4, 4]}
+                            />
+                        )}
                     </Layer>
                     <Layer opacity={mode === 'venue' ? 0.3 : 1}>
                         {/* ブース */}

@@ -6,6 +6,7 @@ import { Obstacle } from '@/types/layout';
 
 interface ObstacleComponentProps {
     data: Obstacle;
+    gridPixelSize: number; // 追加
     isSelected: boolean;
     isEditable: boolean;
     onSelect: () => void;
@@ -14,6 +15,7 @@ interface ObstacleComponentProps {
 
 export default function ObstacleComponent({
     data,
+    gridPixelSize, // 追加
     isSelected,
     isEditable,
     onSelect,
@@ -31,10 +33,11 @@ export default function ObstacleComponent({
     }, [isSelected, isEditable]);
 
     const handleDragEnd = (e: any) => {
+        // ピクセル座標 -> グリッド座標に変換して保存
         onChange({
             ...data,
-            x: e.target.x(),
-            y: e.target.y(),
+            x: Math.round(e.target.x() / gridPixelSize),
+            y: Math.round(e.target.y() / gridPixelSize),
         });
     };
 
@@ -50,12 +53,16 @@ export default function ObstacleComponent({
         node.scaleX(1);
         node.scaleY(1);
 
+        // ピクセルサイズ -> グリッドサイズに変換
+        const newWidth = Math.max(1, Math.round((node.width() * scaleX) / gridPixelSize));
+        const newHeight = Math.max(1, Math.round((node.height() * scaleY) / gridPixelSize));
+
         onChange({
             ...data,
-            x: node.x(),
-            y: node.y(),
-            width: Math.max(5, node.width() * scaleX), // 最小サイズ制限
-            height: Math.max(5, node.height() * scaleY),
+            x: Math.round(node.x() / gridPixelSize),
+            y: Math.round(node.y() / gridPixelSize),
+            width: newWidth,
+            height: newHeight,
             rotation: node.rotation(),
         });
     };
@@ -79,6 +86,12 @@ export default function ObstacleComponent({
         }
     };
 
+    // 表示用のピクセルサイズを計算
+    const pixelX = data.x * gridPixelSize;
+    const pixelY = data.y * gridPixelSize;
+    const pixelWidth = data.width * gridPixelSize;
+    const pixelHeight = data.height * gridPixelSize;
+
     return (
         <React.Fragment>
             <Group
@@ -87,16 +100,16 @@ export default function ObstacleComponent({
                 onDragEnd={handleDragEnd}
                 onClick={onSelect}
                 onTap={onSelect}
-                x={data.x}
-                y={data.y} // グリッドスナップさせるかどうかは親で制御してもいいが、障害物は自由配置もありうる
-                width={data.width}
-                height={data.height}
+                x={pixelX}
+                y={pixelY}
+                width={pixelWidth}
+                height={pixelHeight}
                 rotation={data.rotation}
             >
                 <Rect
                     ref={shapeRef}
-                    width={data.width}
-                    height={data.height}
+                    width={pixelWidth}
+                    height={pixelHeight}
                     fill={getColor()}
                     opacity={0.8}
                     stroke={isSelected ? '#2196f3' : '#333'}
@@ -105,11 +118,11 @@ export default function ObstacleComponent({
                 />
                 <Text
                     text={getLabel()}
-                    fontSize={12}
+                    fontSize={Math.max(12, gridPixelSize / 3)}
                     fill="#fff"
                     padding={5}
                     align="center"
-                    width={data.width}
+                    width={pixelWidth}
                 />
             </Group>
 
@@ -119,7 +132,7 @@ export default function ObstacleComponent({
                     keepRatio={false} // 縦横比固定しない
                     boundBoxFunc={(oldBox, newBox) => {
                         // 極端に小さくならないように制限
-                        if (newBox.width < 20 || newBox.height < 20) {
+                        if (newBox.width < gridPixelSize / 2 || newBox.height < gridPixelSize / 2) {
                             return oldBox;
                         }
                         return newBox;
