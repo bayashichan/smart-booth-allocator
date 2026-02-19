@@ -58,6 +58,10 @@ export default function CanvasArea({
     const bgNodeRef = useRef<any>(null);
     const bgTrRef = useRef<any>(null);
 
+    // Calibration State
+    const [isCalibrating, setIsCalibrating] = useState(false);
+    const [calibrationPoints, setCalibrationPoints] = useState<{ x: number, y: number }[]>([]);
+
     useEffect(() => {
         if (isBgEditing && bgNodeRef.current && bgTrRef.current) {
             bgTrRef.current.nodes([bgNodeRef.current]);
@@ -89,6 +93,8 @@ export default function CanvasArea({
             setActiveTool('none');
             setSelectedObstacleId(null);
             setIsBgEditing(false); // ブースモードでは背景編集オフ
+            setIsCalibrating(false);
+            setCalibrationPoints([]);
         } else {
             setSelectedBoothId(null); // 会場モードではブース選択解除
         }
@@ -193,6 +199,50 @@ export default function CanvasArea({
             setSelectedObstacleId(null);
         }
 
+        // Calibration Logic
+        if (isCalibrating && bgImage) {
+            const pos = stage.getPointerPosition();
+            if (pos) {
+                // ステージ上の座標を取得 (ズーム・パン考慮済み)
+                const point = {
+                    x: (pos.x - stage.x()) / stage.scaleX(),
+                    y: (pos.y - stage.y()) / stage.scaleY()
+                };
+
+                const newPoints = [...calibrationPoints, point];
+                setCalibrationPoints(newPoints);
+
+                if (newPoints.length === 2) {
+                    // 2点クリック完了
+                    setTimeout(() => {
+                        const p1 = newPoints[0];
+                        const p2 = newPoints[1];
+                        const distPx = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+
+                        const input = window.prompt('2点間の実際の距離(mm)を入力してください:', '5000');
+                        if (input) {
+                            const realDistMm = parseFloat(input);
+                            if (!isNaN(realDistMm) && realDistMm > 0) {
+                                // 目標のピクセル距離: (実距離mm / 1マスのmm) * 1マスのピクセル数
+                                const targetDistPx = (realDistMm / gridUnitMm) * GRID_SIZE;
+                                const scaleFactor = targetDistPx / distPx;
+
+                                setBgConfig(prev => ({
+                                    ...prev,
+                                    scaleX: prev.scaleX * scaleFactor,
+                                    scaleY: prev.scaleY * scaleFactor
+                                }));
+                                alert(`縮尺を調整しました (倍率: ${scaleFactor.toFixed(4)})`);
+                            }
+                        }
+                        setIsCalibrating(false);
+                        setCalibrationPoints([]);
+                    }, 100);
+                }
+            }
+            return;
+        }
+
         if (isBgEditing) return;
 
         // ツールが選択されていない場合はステージドラッグ
@@ -219,6 +269,7 @@ export default function CanvasArea({
 
     const handleMouseMove = (e: any) => {
         if (isBgEditing) return;
+        if (isCalibrating) return; // Calibration中はペイント無効
 
         const stage = e.target.getStage();
         if (!stage) return;
@@ -243,6 +294,8 @@ export default function CanvasArea({
     };
 
     const handleMouseUp = () => {
+        if (isCalibrating) return;
+
         if (isPaintingRef.current && mode === 'venue' && activeTool !== 'eraser' && previewRect) {
             const obstacleType = (activeTool === 'wall' || activeTool === 'column') ? activeTool : 'wall';
             const newObstacle: Obstacle = {
@@ -504,6 +557,24 @@ export default function CanvasArea({
 
                                 <button
                                     onClick={() => {
+                                        setIsCalibrating(!isCalibrating);
+                                        if (!isCalibrating) {
+                                            setActiveTool('none');
+                                            setIsBgEditing(false);
+                                            setCalibrationPoints([]);
+                                        }
+                                    }}
+                                    className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${isCalibrating ? 'bg-green-100 ring-2 ring-green-300' : 'hover:bg-gray-100'}`}
+                                    title="2点間の距離を指定して縮尺を合わせる"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-gray-700 mb-1">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                                    </svg>
+                                    <span className="text-[10px] font-medium text-gray-700 leading-tight text-center">縮尺合せ</span>
+                                </button>
+
+                                <button
+                                    onClick={() => {
                                         if (window.confirm('下絵を削除しますか？')) {
                                             setBgImage(null);
                                             setIsBgEditing(false);
@@ -583,7 +654,13 @@ export default function CanvasArea({
             {/* Instruction Toast */}
             {mode === 'venue' && (
                 <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-full text-sm pointer-events-none animate-pulse z-20 whitespace-nowrap">
-                    {isBgEditing ? '下絵を調整中：グリッドに合わせてください' : activeTool !== 'none' ? 'ドラッグしてなぞると連続配置できます' : '移動モード'}
+                    {isCalibrating
+                        ? (calibrationPoints.length === 0 ? '画像上の始点をクリックしてください' : '画像上の終点をクリックしてください')
+                        : isBgEditing
+                            ? '下絵を調整中：グリッドに合わせてください'
+                            : activeTool !== 'none'
+                                ? 'ドラッグしてなぞると連続配置できます'
+                                : '移動モード'}
                 </div>
             )}
 
