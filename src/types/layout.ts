@@ -1,10 +1,11 @@
-export type VendorCategory = string;
+export type VendorCategory = '占い・スピリチュアル' | '物販' | 'ボディケア・美容' | '飲食' | 'ワークショップ' | 'その他';
 
 export type BoothSize = 0.5 | 1.0 | 2.0 | 3.0;
 
 export interface Booth {
   id: string;
   name: string; // 出展者名
+  seatNumber?: string; // 座席番号
   size: BoothSize; // 0.5, 1.0, 2.0, 3.0
   category: VendorCategory;
   preferences: {

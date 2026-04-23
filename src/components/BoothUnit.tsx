@@ -2,24 +2,28 @@
 
 import React from 'react';
 import { Group, Rect, Text } from 'react-konva';
-import { Booth } from '@/types/layout';
+import { Booth, VendorCategory } from '@/types/layout';
 
 interface BoothUnitProps {
     data: Booth;
-    gridPixelSize: number; // 1グリッドあたりのピクセル数 (例: 40px)
+    gridPixelSize: number; // 1グリッドあたりのピクセル数
+    gridUnitMm?: number;
+    baseTableWidthMm?: number;
+    baseTableDepthMm?: number;
     onDragStart?: (e: any) => void;
     onDragEnd?: (e: any) => void;
+    onClick?: (e: any) => void;
     draggable?: boolean;
 }
 
-const UNIT_GRID_SIZE = 450; // mm
-
-// 3層構造の定義 (単位: mm)
-// 全体奥行き: 通路(1800) + テーブル(450〜600) + スタッフ(900) = 約3150〜3300mm
-const LAYERS_MM = {
-    aisle: { depth: 1800, color: '#e0f2f1', label: '通路' }, // 薄い青緑
-    table: { depth: 450, color: '#bdbdbd', label: '机' },   // グレー
-    staff: { depth: 900, color: '#ffecb3', label: 'スタッフ' } // 薄い黄色
+// カテゴリごとの色定義（枠線 + 薄い塗り）
+const CATEGORY_COLORS: Record<VendorCategory, { stroke: string; fill: string }> = {
+    '占い・スピリチュアル': { stroke: '#7c3aed', fill: '#ede9fe' }, // 紫
+    '物販':                 { stroke: '#0284c7', fill: '#e0f2fe' }, // 青
+    'ボディケア・美容':     { stroke: '#db2777', fill: '#fce7f3' }, // ピンク
+    '飲食':                 { stroke: '#ea580c', fill: '#fff7ed' }, // オレンジ
+    'ワークショップ':       { stroke: '#16a34a', fill: '#dcfce7' }, // 緑
+    'その他':               { stroke: '#6b7280', fill: '#f3f4f6' }, // グレー
 };
 
 export default function BoothUnit({
@@ -30,27 +34,27 @@ export default function BoothUnit({
     baseTableDepthMm = 450,
     onDragStart,
     onDragEnd,
-    draggable = true
-}: BoothUnitProps & { gridUnitMm?: number, baseTableWidthMm?: number, baseTableDepthMm?: number }) {
-    // 幅 (mm)
-    // sizeMmが指定されていればそれを使用、なければ size (倍率) から計算
-    // 1.0卓 = baseTableWidthMm (デフォルト1800mm) とする
-    const widthMm = data.sizeMm ? data.sizeMm.width : data.size * baseTableWidthMm;
-
-    // ピクセル換算: (mm / gridUnitMm) * gridPixelSize
+    onClick,
+    draggable = true,
+}: BoothUnitProps) {
+    // mm → px 変換
     const mmToPx = (mm: number) => (mm / gridUnitMm) * gridPixelSize;
 
+    // ブース幅（mm）
+    const widthMm = data.sizeMm ? data.sizeMm.width : data.size * baseTableWidthMm;
+    // ブース奥行き（mm）
+    const depthMm = data.sizeMm ? data.sizeMm.depth : baseTableDepthMm;
+
     const widthPx = mmToPx(widthMm);
+    const heightPx = mmToPx(depthMm);
 
-    // 各層の高さ (ピクセル)
-    // sizeMm.depth があれば、それをテーブルの奥行きとする
-    const tableDepthMm = data.sizeMm ? data.sizeMm.depth : baseTableDepthMm;
+    const colors = CATEGORY_COLORS[data.category] ?? CATEGORY_COLORS['その他'];
 
-    const aisleHeight = mmToPx(LAYERS_MM.aisle.depth);
-    const tableHeight = mmToPx(tableDepthMm);
-    const staffHeight = mmToPx(LAYERS_MM.staff.depth);
+    // 表示テキスト：座席番号があればそれのみ、なければ出展名
+    const displayText = data.seatNumber ? data.seatNumber : data.name;
 
-    // const totalHeight = aisleHeight + tableHeight + staffHeight;
+    // フォントサイズ：ボックスの大きさに応じて調整
+    const fontSize = Math.max(9, Math.min(16, heightPx * 0.35));
 
     return (
         <Group
@@ -60,65 +64,33 @@ export default function BoothUnit({
             draggable={draggable}
             onDragStart={onDragStart}
             onDragEnd={onDragEnd}
+            onClick={onClick}
         >
-            {/* 1. 客用通路 (Customer Aisle) */}
+            {/* 机の枠線のみ描画（薄い背景色 + カテゴリカラーの枠線） */}
             <Rect
                 x={0}
                 y={0}
                 width={widthPx}
-                height={aisleHeight}
-                fill={LAYERS_MM.aisle.color}
-                stroke="#ccc"
-                strokeWidth={1}
+                height={heightPx}
+                fill={colors.fill}
+                stroke={colors.stroke}
+                strokeWidth={2}
+                cornerRadius={2}
             />
+
+            {/* 座席番号（または出展名）のみ中央に表示 */}
             <Text
-                x={5}
-                y={5}
-                text="通路"
-                fontSize={10}
-                fill="#555"
-            />
-
-            {/* 2. テーブル (Table) */}
-            <Rect
-                x={0}
-                y={aisleHeight}
-                width={widthPx}
-                height={tableHeight}
-                fill={LAYERS_MM.table.color}
-                stroke="#666"
-                strokeWidth={1}
-            />
-
-            {/* 3. スタッフエリア (Staff Zone) */}
-            <Rect
-                x={0}
-                y={aisleHeight + tableHeight}
-                width={widthPx}
-                height={staffHeight}
-                fill={LAYERS_MM.staff.color}
-                stroke="#ccc"
-                strokeWidth={1}
-            />
-
-            {/* ブース名ラベル */}
-            <Text
-                x={0}
-                y={aisleHeight + tableHeight + 5}
-                width={widthPx}
-                text={data.name}
-                fontSize={12}
+                x={4}
+                y={0}
+                width={widthPx - 8}
+                height={heightPx}
+                text={displayText}
+                fontSize={fontSize}
+                fontStyle="bold"
                 align="center"
-                fill="#333"
-            />
-            <Text
-                x={0}
-                y={aisleHeight + tableHeight + 20}
-                width={widthPx}
-                text={data.sizeMm ? `${data.sizeMm.width}x${data.sizeMm.depth}mm` : `${data.size}卓`}
-                fontSize={10}
-                align="center"
-                fill="#666"
+                verticalAlign="middle"
+                fill={colors.stroke}
+                wrap="word"
             />
         </Group>
     );
