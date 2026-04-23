@@ -1,4 +1,4 @@
-export type VendorCategory = '物販' | 'ボディケア' | '飲食' | 'ワークショップ' | 'その他';
+export type VendorCategory = string;
 
 export type BoothSize = 0.5 | 1.0 | 2.0 | 3.0;
 
