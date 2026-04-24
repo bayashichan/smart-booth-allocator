@@ -10,6 +10,8 @@ interface BoothUnitProps {
     gridUnitMm?: number;
     baseTableWidthMm?: number;
     baseTableDepthMm?: number;
+    fontSize?: number; // 座席番号フォントサイズ
+    isSelected?: boolean; // 選択中フラグ
     onDragStart?: (e: any) => void;
     onDragEnd?: (e: any) => void;
     onClick?: (e: any) => void;
@@ -32,6 +34,8 @@ export default function BoothUnit({
     gridUnitMm = 450,
     baseTableWidthMm = 1800,
     baseTableDepthMm = 450,
+    fontSize = 14,
+    isSelected = false,
     onDragStart,
     onDragEnd,
     onClick,
@@ -53,9 +57,6 @@ export default function BoothUnit({
     // 表示テキスト：座席番号があればそれのみ、なければ出展名
     const displayText = data.seatNumber ? data.seatNumber : data.name;
 
-    // フォントサイズ：ボックスの大きさに応じて調整
-    const fontSize = Math.max(9, Math.min(16, heightPx * 0.35));
-
     return (
         <Group
             x={data.x * gridPixelSize}
@@ -73,8 +74,8 @@ export default function BoothUnit({
                 width={widthPx}
                 height={heightPx}
                 fill={colors.fill}
-                stroke={colors.stroke}
-                strokeWidth={2}
+                stroke={isSelected ? '#f59e0b' : colors.stroke}
+                strokeWidth={isSelected ? 3 : 2}
                 cornerRadius={2}
             />
 
@@ -91,6 +92,7 @@ export default function BoothUnit({
                 verticalAlign="middle"
                 fill={colors.stroke}
                 wrap="word"
+                listening={false}
             />
         </Group>
     );

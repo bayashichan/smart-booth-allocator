@@ -35,9 +35,10 @@ export default function CanvasArea({
     const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
     // Global Config State
-    const [gridUnitMm, setGridUnitMm] = useState(450); // 1グリッド＝何mmか
-    const [baseTableWidthMm, setBaseTableWidthMm] = useState(1800); // 標準テーブル幅
-    const [baseTableDepthMm, setBaseTableDepthMm] = useState(450); // 標準テーブル奥行
+    const [gridUnitMm, setGridUnitMm] = useState(450);
+    const [baseTableWidthMm, setBaseTableWidthMm] = useState(1800);
+    const [baseTableDepthMm, setBaseTableDepthMm] = useState(450);
+    const [seatFontSize, setSeatFontSize] = useState(14); // 座席番号フォントサイズ
 
     // Painting / Line Tool State
     const [activeTool, setActiveTool] = useState<ToolType>('none');
@@ -50,6 +51,11 @@ export default function CanvasArea({
 
     // Booth editing state
     const [selectedBoothId, setSelectedBoothId] = useState<string | null>(null);
+    // 複数選択
+    const [selectedBoothIds, setSelectedBoothIds] = useState<Set<string>>(new Set());
+    // ドラッグ範囲選択
+    const [dragSelect, setDragSelect] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
+    const isDragSelectingRef = useRef(false);
 
     // Background Image State
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
@@ -92,11 +98,13 @@ export default function CanvasArea({
         if (mode === 'booth') {
             setActiveTool('none');
             setSelectedObstacleId(null);
-            setIsBgEditing(false); // ブースモードでは背景編集オフ
+            setIsBgEditing(false);
             setIsCalibrating(false);
             setCalibrationPoints([]);
         } else {
-            setSelectedBoothId(null); // 会場モードではブース選択解除
+            setSelectedBoothId(null);
+            setSelectedBoothIds(new Set());
+            setDragSelect(null);
         }
     }, [mode]);
 
@@ -197,6 +205,18 @@ export default function CanvasArea({
         if (clickedOnStage) {
             setSelectedBoothId(null);
             setSelectedObstacleId(null);
+            // ブースモードでは範囲選択開始
+            if (mode === 'booth') {
+                setSelectedBoothIds(new Set());
+                const pos = stage.getPointerPosition();
+                if (pos) {
+                    const stageX = (pos.x - stage.x()) / stage.scaleX();
+                    const stageY = (pos.y - stage.y()) / stage.scaleY();
+                    isDragSelectingRef.current = true;
+                    setDragSelect({ startX: stageX, startY: stageY, endX: stageX, endY: stageY });
+                }
+                return;
+            }
         }
 
         // Calibration Logic
@@ -269,10 +289,23 @@ export default function CanvasArea({
 
     const handleMouseMove = (e: any) => {
         if (isBgEditing) return;
-        if (isCalibrating) return; // Calibration中はペイント無効
+        if (isCalibrating) return;
 
         const stage = e.target.getStage();
         if (!stage) return;
+
+        // ドラッグ範囲選択の更新
+        if (isDragSelectingRef.current && dragSelect) {
+            const pos = stage.getPointerPosition();
+            if (pos) {
+                setDragSelect(prev => prev ? {
+                    ...prev,
+                    endX: (pos.x - stage.x()) / stage.scaleX(),
+                    endY: (pos.y - stage.y()) / stage.scaleY(),
+                } : null);
+            }
+            return;
+        }
 
         if (isPaintingRef.current && mode === 'venue') {
             const pos = stage.getPointerPosition();
@@ -295,6 +328,31 @@ export default function CanvasArea({
 
     const handleMouseUp = () => {
         if (isCalibrating) return;
+
+        // ドラッグ範囲選択の確定
+        if (isDragSelectingRef.current && dragSelect) {
+            isDragSelectingRef.current = false;
+            const minX = Math.min(dragSelect.startX, dragSelect.endX);
+            const maxX = Math.max(dragSelect.startX, dragSelect.endX);
+            const minY = Math.min(dragSelect.startY, dragSelect.endY);
+            const maxY = Math.max(dragSelect.startY, dragSelect.endY);
+            // 範囲内のブースを選択
+            const selected = new Set<string>();
+            booths.forEach(b => {
+                const widthMm = b.sizeMm ? b.sizeMm.width : b.size * baseTableWidthMm;
+                const depthMm = b.sizeMm ? b.sizeMm.depth : baseTableDepthMm;
+                const bx = b.x * GRID_SIZE;
+                const by = b.y * GRID_SIZE;
+                const bw = (widthMm / gridUnitMm) * GRID_SIZE;
+                const bh = (depthMm / gridUnitMm) * GRID_SIZE;
+                if (bx < maxX && bx + bw > minX && by < maxY && by + bh > minY) {
+                    selected.add(b.id);
+                }
+            });
+            setSelectedBoothIds(selected);
+            setDragSelect(null);
+            return;
+        }
 
         if (isPaintingRef.current && mode === 'venue' && activeTool !== 'eraser' && previewRect) {
             const obstacleType = (activeTool === 'wall' || activeTool === 'column') ? activeTool : 'wall';
@@ -338,17 +396,48 @@ export default function CanvasArea({
         if (mode === 'venue') return;
         const x = Math.round(e.target.x() / GRID_SIZE);
         const y = Math.round(e.target.y() / GRID_SIZE);
-        const newBooths = booths.map(booth => booth.id === id ? { ...booth, x, y, isPlaced: true } : booth);
-        onBoothsChange(newBooths);
+        const dx = x - (booths.find(b => b.id === id)?.x ?? 0);
+        const dy = y - (booths.find(b => b.id === id)?.y ?? 0);
+        // 複数選択中は全て移動
+        if (selectedBoothIds.has(id) && selectedBoothIds.size > 1) {
+            const newBooths = booths.map(b =>
+                selectedBoothIds.has(b.id) ? { ...b, x: b.x + dx, y: b.y + dy, isPlaced: true } : b
+            );
+            onBoothsChange(newBooths);
+        } else {
+            const newBooths = booths.map(b => b.id === id ? { ...b, x, y, isPlaced: true } : b);
+            onBoothsChange(newBooths);
+        }
         e.target.to({ x: x * GRID_SIZE, y: y * GRID_SIZE, duration: 0.1 });
     };
 
-    // Booth Click Handler (for selection)
+    // Booth Click Handler (Shift で複数選択)
     const handleBoothClick = (e: any, boothId: string) => {
         if (mode === 'booth') {
             e.cancelBubble = true;
-            setSelectedBoothId(boothId);
+            if (e.evt?.shiftKey) {
+                // Shiftクリックで追加/解除
+                const next = new Set(selectedBoothIds);
+                if (next.has(boothId)) next.delete(boothId); else next.add(boothId);
+                setSelectedBoothIds(next);
+                setSelectedBoothId(next.size === 1 ? boothId : null);
+            } else {
+                setSelectedBoothId(boothId);
+                setSelectedBoothIds(new Set([boothId]));
+            }
         }
+    };
+
+    // 選択ブースを 90度回転
+    const rotateSelectedBooths = () => {
+        const ids = selectedBoothIds.size > 0 ? selectedBoothIds : selectedBoothId ? new Set([selectedBoothId]) : new Set<string>();
+        if (ids.size === 0) return;
+        const newBooths = booths.map(b =>
+            ids.has(b.id)
+                ? { ...b, rotation: ((b.rotation + 90) % 360) as 0 | 90 | 180 | 270 }
+                : b
+        );
+        onBoothsChange(newBooths);
     };
 
     // Update Booth Size
@@ -428,16 +517,21 @@ export default function CanvasArea({
                 <div className="absolute top-20 right-4 z-20 bg-white shadow-xl rounded-xl p-4 border border-blue-100 w-64 animate-in slide-in-from-right-4">
                     <div className="flex justify-between items-center mb-2 border-b pb-2">
                         <h3 className="font-bold text-gray-700 truncate">{selectedBooth.name}</h3>
-                        <button onClick={() => setSelectedBoothId(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+                        <button onClick={() => { setSelectedBoothId(null); setSelectedBoothIds(new Set()); }} className="text-gray-400 hover:text-gray-600">✕</button>
                     </div>
 
                     <div className="space-y-3">
+                        {/* 座席番号 */}
+                        {selectedBooth.seatNumber && (
+                            <div className="text-sm font-medium text-purple-700">#{selectedBooth.seatNumber}</div>
+                        )}
+
                         <div>
                             <label className="text-xs text-gray-500 block mb-1">現在のサイズ</label>
                             <div className="text-sm font-medium">
                                 {selectedBooth.sizeMm
                                     ? `${selectedBooth.sizeMm.width}mm x ${selectedBooth.sizeMm.depth}mm`
-                                    : `${selectedBooth.size}卓 (${selectedBooth.size * baseTableWidthMm}x${baseTableDepthMm}mm)`
+                                    : `${selectedBooth.size}師 (${selectedBooth.size * baseTableWidthMm}x${baseTableDepthMm}mm)`
                                 }
                             </div>
                         </div>
@@ -465,6 +559,17 @@ export default function CanvasArea({
                             </div>
                         </div>
 
+                        {/* 回転ボタン */}
+                        <button
+                            onClick={rotateSelectedBooths}
+                            className="w-full flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg py-1.5 text-sm font-medium transition"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                            </svg>
+                            90度回転{selectedBoothIds.size > 1 ? ` (選択中 ${selectedBoothIds.size}帪)` : ''}
+                        </button>
+
                         {selectedBooth.sizeMm && (
                             <button
                                 onClick={() => {
@@ -478,12 +583,52 @@ export default function CanvasArea({
                         )}
 
                         <div className="text-xs text-gray-400 mt-2">
-                            ※基本サイズ: 1.0卓={baseTableWidthMm}mm幅 / 奥行{baseTableDepthMm}mm
+                            ※基本サイズ: 1.0師={baseTableWidthMm}mm幅 / 奥行{baseTableDepthMm}mm
                         </div>
                     </div>
                 </div>
             )}
 
+            {/* 複数選択中のバネル */}
+            {selectedBoothIds.size > 1 && mode === 'booth' && (
+                <div className="absolute top-20 right-4 z-20 bg-white shadow-xl rounded-xl p-4 border border-amber-200 w-64 animate-in slide-in-from-right-4">
+                    <div className="flex justify-between items-center mb-3">
+                        <span className="font-bold text-amber-700">{selectedBoothIds.size}帪選択中</span>
+                        <button onClick={() => { setSelectedBoothIds(new Set()); setSelectedBoothId(null); }} className="text-gray-400 hover:text-gray-600">✕</button>
+                    </div>
+                    <button
+                        onClick={rotateSelectedBooths}
+                        className="w-full flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg py-2 text-sm font-medium transition"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                        </svg>
+                        まとめて 90度回転
+                    </button>
+                    <p className="text-xs text-gray-400 mt-2 text-center">ドラッグでまとめて移動できます</p>
+                </div>
+            )}
+
+
+            {/* ブース配置モードのツールバー（フォントサイズ） */}
+            {mode === 'booth' && (
+                <div className="absolute top-20 left-4 z-10 bg-white/90 backdrop-blur shadow-xl rounded-xl p-3 border border-blue-100 animate-in slide-in-from-left-4 flex flex-col gap-2 w-56">
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 whitespace-nowrap">文字サイズ:</span>
+                        <input
+                            type="range"
+                            min={8}
+                            max={32}
+                            step={1}
+                            value={seatFontSize}
+                            onChange={(e) => setSeatFontSize(Number(e.target.value))}
+                            className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <span className="text-xs font-bold text-gray-700 w-6 text-right">{seatFontSize}</span>
+                    </div>
+                    <p className="text-xs text-gray-400">Shift+クリック or 空白ドラッグ→範囲選択</p>
+                </div>
+            )}
 
             {/* Venue Editing Toolbar */}
             {mode === 'venue' && (
@@ -746,6 +891,20 @@ export default function CanvasArea({
                         )}
                     </Layer>
                     <Layer opacity={mode === 'venue' ? 0.3 : 1}>
+                        {/* ドラッグ範囲選択の矩形 */}
+                        {dragSelect && mode === 'booth' && (
+                            <Rect
+                                x={Math.min(dragSelect.startX, dragSelect.endX)}
+                                y={Math.min(dragSelect.startY, dragSelect.endY)}
+                                width={Math.abs(dragSelect.endX - dragSelect.startX)}
+                                height={Math.abs(dragSelect.endY - dragSelect.startY)}
+                                fill="rgba(59, 130, 246, 0.08)"
+                                stroke="#3b82f6"
+                                strokeWidth={1.5}
+                                dash={[6, 4]}
+                                listening={false}
+                            />
+                        )}
                         {/* ブース */}
                         {booths.map(booth => (
                             <Group
@@ -758,24 +917,11 @@ export default function CanvasArea({
                                     gridUnitMm={gridUnitMm}
                                     baseTableWidthMm={baseTableWidthMm}
                                     baseTableDepthMm={baseTableDepthMm}
+                                    fontSize={seatFontSize}
+                                    isSelected={selectedBoothIds.has(booth.id)}
                                     draggable={mode === 'booth'}
                                     onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
                                 />
-                                {/* 選択時の枠線 */}
-                                {selectedBoothId === booth.id && (
-                                    <Rect
-                                        x={booth.x * GRID_SIZE}
-                                        y={booth.y * GRID_SIZE}
-                                        width={(booth.sizeMm?.width ?? (booth.size * 1800)) / gridUnitMm * GRID_SIZE}
-                                        height={(
-                                            (1800 + (booth.sizeMm?.depth ?? 450) + 900) / gridUnitMm * GRID_SIZE
-                                        )}
-                                        stroke="#2196f3"
-                                        strokeWidth={2}
-                                        listening={false}
-                                        dash={[5, 5]}
-                                    />
-                                )}
                             </Group>
                         ))}
                     </Layer>
