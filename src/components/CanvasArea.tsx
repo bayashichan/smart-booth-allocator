@@ -106,7 +106,7 @@ export default function CanvasArea({
         }
     }, [isBgEditing, bgImage]);
 
-    // === 画像エクスポート ===
+    // === 画像（PNG）エクスポート ===
     const handleExport = () => {
         const stage = stageRef.current;
         if (!stage) return;
@@ -116,7 +116,8 @@ export default function CanvasArea({
         if (gridLayer) gridLayer.visible(false);
         stage.batchDraw();
 
-        const dataUrl = stage.toDataURL({ pixelRatio: 2 });
+        // 印刷用・高解像度にするため pixelRatio を 5 に設定（かなり綺麗になります）
+        const dataUrl = stage.toDataURL({ pixelRatio: 5 });
 
         if (gridLayer) gridLayer.visible(true);
         stage.batchDraw();
@@ -125,6 +126,84 @@ export default function CanvasArea({
         link.download = `booth-layout-${new Date().toISOString().slice(0, 10)}.png`;
         link.href = dataUrl;
         link.click();
+    };
+
+    // === ベクター画像（SVG）エクスポート ===
+    const handleExportSVG = () => {
+        const svgW = dimensions.width;
+        const svgH = dimensions.height;
+
+        const DEFAULT_CATEGORY_COLORS: Record<string, { stroke: string; fill: string }> = {
+            '占い・スピリチュアル': { stroke: '#7c3aed', fill: '#ede9fe' },
+            '物販':                 { stroke: '#0284c7', fill: '#e0f2fe' },
+            'ボディケア・美容':     { stroke: '#db2777', fill: '#fce7f3' },
+            '飲食':                 { stroke: '#ea580c', fill: '#fff7ed' },
+            'ワークショップ':       { stroke: '#16a34a', fill: '#dcfce7' },
+            'その他':               { stroke: '#6b7280', fill: '#f3f4f6' },
+        };
+
+        // 1. ブースをSVG要素に変換
+        const boothsSvg = booths.map(b => {
+            const widthMm = b.sizeMm ? b.sizeMm.width : b.size * baseTableWidthMm;
+            const depthMm = b.sizeMm ? b.sizeMm.depth : baseTableDepthMm;
+            const w = (widthMm / gridUnitMm) * GRID_SIZE;
+            const h = (depthMm / gridUnitMm) * GRID_SIZE;
+            const colors = categoryColors[b.category] || DEFAULT_CATEGORY_COLORS[b.category] || DEFAULT_CATEGORY_COLORS['その他'];
+            const rot = b.rotation || 0;
+            const text = b.seatNumber || b.name;
+
+            const cx = w / 2;
+            const cy = h / 2;
+
+            return `<g transform="translate(${b.x * GRID_SIZE}, ${b.y * GRID_SIZE}) rotate(${rot})">
+                <rect width="${w}" height="${h}" fill="${colors.fill}" stroke="${colors.stroke}" stroke-width="2" rx="2" />
+                <text x="${cx}" y="${cy}" font-family="sans-serif" font-size="${seatFontSize}px" font-weight="bold" fill="${colors.stroke}" text-anchor="middle" dominant-baseline="central" transform="rotate(${-rot}, ${cx}, ${cy})">${text}</text>
+            </g>`;
+        }).join('\n');
+
+        // 2. 障害物をSVG要素に変換
+        const obstaclesSvg = obstacles.map(obs => {
+            return `<rect x="${obs.x * GRID_SIZE}" y="${obs.y * GRID_SIZE}" width="${obs.width * GRID_SIZE}" height="${obs.height * GRID_SIZE}" fill="none" stroke="${obstacleColor}" stroke-width="${obstacleStrokeWidth}" stroke-dasharray="4 4" />`;
+        }).join('\n');
+
+        // 3. テキストラベルを変換
+        const textLabelsSvg = textLabels.map(l => {
+            const fontStyle = l.fontStyle || '';
+            const fw = fontStyle.includes('bold') ? 'bold' : 'normal';
+            const fs = fontStyle.includes('italic') ? 'italic' : 'normal';
+            return `<text x="${l.x}" y="${l.y + l.fontSize}" font-family="sans-serif" font-size="${l.fontSize}px" font-weight="${fw}" font-style="${fs}" fill="${l.color}" transform="rotate(${l.rotation}, ${l.x}, ${l.y})">${l.text}</text>`;
+        }).join('\n');
+
+        // 4. 下絵
+        let bgSvg = '';
+        if (bgImage) {
+            const canvas = document.createElement('canvas');
+            canvas.width = bgImage.width;
+            canvas.height = bgImage.height;
+            const ctx = canvas.getContext('2d');
+            if(ctx) {
+                ctx.drawImage(bgImage, 0, 0);
+                const dataURL = canvas.toDataURL('image/png');
+                bgSvg = `<image href="${dataURL}" x="${bgConfig.x}" y="${bgConfig.y}" width="${bgImage.width * bgConfig.scaleX}" height="${bgImage.height * bgConfig.scaleY}" transform="rotate(${bgConfig.rotation} ${bgConfig.x} ${bgConfig.y})" opacity="${bgConfig.opacity}" />`;
+            }
+        }
+
+        const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}" width="${svgW}" height="${svgH}">
+            <g transform="translate(${stagePos.x}, ${stagePos.y}) scale(${stageScale})">
+                ${bgSvg}
+                ${obstaclesSvg}
+                ${boothsSvg}
+                ${textLabelsSvg}
+            </g>
+        </svg>`;
+
+        const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `booth-layout-${new Date().toISOString().slice(0, 10)}.svg`;
+        link.click();
+        URL.revokeObjectURL(url);
     };
 
     // === テキスト追加（キャンバスクリック） ===
@@ -1227,17 +1306,29 @@ export default function CanvasArea({
                 </div>
             )}
 
-            {/* エクスポートボタン */}
-            <button
-                onClick={handleExport}
-                className="absolute bottom-4 left-4 z-10 flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl shadow-lg text-sm font-semibold transition"
-                title="グリッドなし PNG でダウンロード"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                </svg>
-                画像保存
-            </button>
+            {/* エクスポートボタン群 */}
+            <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-2">
+                <button
+                    onClick={handleExport}
+                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl shadow-lg text-sm font-semibold transition"
+                    title="高画質 PNG でダウンロード（印刷用）"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    高画質画像(PNG)保存
+                </button>
+                <button
+                    onClick={handleExportSVG}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl shadow-lg text-sm font-semibold transition"
+                    title="ベクターデータ (SVG) でダウンロード"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                    </svg>
+                    ベクター(SVG)保存
+                </button>
+            </div>
 
 
             {/* Instruction Toast */}
