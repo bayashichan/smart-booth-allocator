@@ -124,7 +124,7 @@ export default function Home() {
           <input
             type="text"
             placeholder="Google Sheets CSV URL (e.g. https://docs.google.com/.../pub?output=csv)"
-            className="flex-grow border border-gray-300 rounded px-3 py-2 text-sm"
+            className="flex-grow border border-gray-300 rounded px-3 py-2 text-sm text-gray-800 bg-white"
             value={csvUrl}
             onChange={(e) => setCsvUrl(e.target.value)}
           />
