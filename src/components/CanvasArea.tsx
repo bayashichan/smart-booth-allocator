@@ -4,30 +4,39 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Stage, Layer, Line, Rect, Group, Image as KonvaImage, Transformer } from 'react-konva';
 import BoothUnit from './BoothUnit';
 import ObstacleComponent from './ObstacleComponent';
-import { Booth, Obstacle } from '@/types/layout';
+import TextLabelComponent from './TextLabelComponent';
+import { Booth, Obstacle, TextLabel } from '@/types/layout';
 
-const GRID_SIZE = 40; // 画面上の1グリッドのピクセルサイズ (表示用スケール基準)
+const GRID_SIZE = 40;
 
 interface CanvasAreaProps {
     booths: Booth[];
     onBoothsChange: (newBooths: Booth[]) => void;
     obstacles: Obstacle[];
     onObstaclesChange: (newObstacles: Obstacle[]) => void;
+    textLabels: TextLabel[];
+    onTextLabelsChange: (labels: TextLabel[]) => void;
+    stageRef?: React.RefObject<any>;
     mode: 'booth' | 'venue';
     onModeChange: (mode: 'booth' | 'venue') => void;
 }
 
-type ToolType = 'none' | 'wall' | 'column' | 'eraser';
+type ToolType = 'none' | 'wall' | 'column' | 'eraser' | 'text';
 
 export default function CanvasArea({
     booths,
     onBoothsChange,
     obstacles,
     onObstaclesChange,
+    textLabels,
+    onTextLabelsChange,
+    stageRef: externalStageRef,
     mode,
     onModeChange
 }: CanvasAreaProps) {
     const containerRef = useRef<HTMLDivElement>(null);
+    const internalStageRef = useRef<any>(null);
+    const stageRef = externalStageRef ?? internalStageRef;
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
     // Viewport State
@@ -46,11 +55,15 @@ export default function CanvasArea({
     // 障害物描画設定
     const [obstacleColor, setObstacleColor] = useState('#607d8b');
     const [obstacleStrokeWidth, setObstacleStrokeWidth] = useState(2);
-    const [obstacleDimW, setObstacleDimW] = useState(1800); // mm
-    const [obstacleDimH, setObstacleDimH] = useState(450);  // mm
+    const [obstacleDimW, setObstacleDimW] = useState(1800);
+    const [obstacleDimH, setObstacleDimH] = useState(450);
 
     // ブース カテゴリ別カラーマップ
     const [categoryColors, setCategoryColors] = useState<Record<string, { stroke: string; fill: string }>>({});
+
+    // テキストラベル 選択・スタイル設定
+    const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
+    const [textSettings, setTextSettings] = useState({ fontSize: 20, color: '#1f2937', fontStyle: '' });
 
     // Painting / Line Tool State
     const [activeTool, setActiveTool] = useState<ToolType>('none');
@@ -92,6 +105,44 @@ export default function CanvasArea({
             bgTrRef.current.getLayer().batchDraw();
         }
     }, [isBgEditing, bgImage]);
+
+    // === 画像エクスポート ===
+    const handleExport = () => {
+        const stage = stageRef.current;
+        if (!stage) return;
+        // グリッドレイヤー（最初のレイヤー）を一時非表示
+        const layers = stage.getLayers();
+        const gridLayer = layers[0];
+        if (gridLayer) gridLayer.visible(false);
+        stage.batchDraw();
+
+        const dataUrl = stage.toDataURL({ pixelRatio: 2 });
+
+        if (gridLayer) gridLayer.visible(true);
+        stage.batchDraw();
+
+        const link = document.createElement('a');
+        link.download = `booth-layout-${new Date().toISOString().slice(0, 10)}.png`;
+        link.href = dataUrl;
+        link.click();
+    };
+
+    // === テキスト追加（キャンバスクリック） ===
+    const handleAddText = (stageX: number, stageY: number) => {
+        const newLabel: TextLabel = {
+            id:        `text-${Date.now()}`,
+            text:      'テキスト',
+            x:         stageX,
+            y:         stageY,
+            fontSize:  textSettings.fontSize,
+            color:     textSettings.color,
+            fontStyle: textSettings.fontStyle,
+            rotation:  0,
+        };
+        onTextLabelsChange([...textLabels, newLabel]);
+        setSelectedTextId(newLabel.id);
+        setActiveTool('none');
+    };
 
     // Handle Resize
     useEffect(() => {
@@ -290,6 +341,17 @@ export default function CanvasArea({
         if (clickedOnStage) {
             setSelectedBoothId(null);
             setSelectedObstacleId(null);
+            setSelectedTextId(null);
+            // テキストツール → クリック位置にテキスト追加
+            if (activeTool === 'text') {
+                const pos = stage.getPointerPosition();
+                if (pos) {
+                    const sx = (pos.x - stage.x()) / stage.scaleX();
+                    const sy = (pos.y - stage.y()) / stage.scaleY();
+                    handleAddText(sx, sy);
+                }
+                return;
+            }
             // ブースモードでは範囲選択開始
             if (mode === 'booth') {
                 setSelectedBoothIds(new Set());
@@ -888,7 +950,49 @@ export default function CanvasArea({
                             <div className="w-6 h-6 mb-1 text-red-500 border border-current rounded flex items-center justify-center">✕</div>
                             <span className="text-[10px] font-medium text-red-600 leading-tight text-center">消しゴム</span>
                         </button>
+
+                        <button
+                            onClick={() => { setActiveTool('text'); setIsBgEditing(false); }}
+                            className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'text' ? 'bg-purple-100 ring-2 ring-purple-300' : 'hover:bg-gray-100'}`}
+                        >
+                            <div className="w-6 h-6 mb-1 flex items-center justify-center text-purple-700 font-bold text-lg">T</div>
+                            <span className="text-[10px] font-medium text-purple-700 leading-tight text-center">テキスト</span>
+                        </button>
                     </div>
+
+                    {/* テキストツール選択時のスタイル設定 */}
+                    {activeTool === 'text' && (
+                        <div className="w-full border-t border-gray-100 pt-2 flex flex-col gap-2 px-1">
+                            <div className="flex items-center gap-2">
+                                <label className="text-[10px] text-gray-500 whitespace-nowrap">文字色:</label>
+                                <input
+                                    type="color"
+                                    value={textSettings.color}
+                                    onChange={(e) => setTextSettings(s => ({ ...s, color: e.target.value }))}
+                                    className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0.5"
+                                />
+                                <label className="text-[10px] text-gray-500 whitespace-nowrap">サイズ:</label>
+                                <input
+                                    type="number"
+                                    min={8} max={200} step={2}
+                                    value={textSettings.fontSize}
+                                    onChange={(e) => setTextSettings(s => ({ ...s, fontSize: Number(e.target.value) }))}
+                                    className="w-12 border rounded px-1 text-xs text-gray-800"
+                                />
+                            </div>
+                            <div className="flex gap-1">
+                                <button
+                                    onClick={() => setTextSettings(s => ({ ...s, fontStyle: s.fontStyle.includes('bold') ? s.fontStyle.replace('bold','').trim() : (s.fontStyle + ' bold').trim() }))}
+                                    className={`text-xs px-2 py-0.5 rounded border font-bold transition ${textSettings.fontStyle.includes('bold') ? 'bg-purple-100 border-purple-400 text-purple-700' : 'border-gray-300 text-gray-600'}`}
+                                >B</button>
+                                <button
+                                    onClick={() => setTextSettings(s => ({ ...s, fontStyle: s.fontStyle.includes('italic') ? s.fontStyle.replace('italic','').trim() : (s.fontStyle + ' italic').trim() }))}
+                                    className={`text-xs px-2 py-0.5 rounded border italic transition ${textSettings.fontStyle.includes('italic') ? 'bg-purple-100 border-purple-400 text-purple-700' : 'border-gray-300 text-gray-600'}`}
+                                ><em>I</em></button>
+                                <span className="text-[10px] text-gray-400 my-auto ml-1">クリックで追加</span>
+                            </div>
+                        </div>
+                    )}
 
                     {/* 障害物の描画設定（壁/柱ペン選択時のみ） */}
                     {(activeTool === 'wall' || activeTool === 'column') && (
@@ -1123,6 +1227,17 @@ export default function CanvasArea({
                 </div>
             )}
 
+            {/* エクスポートボタン */}
+            <button
+                onClick={handleExport}
+                className="absolute bottom-4 left-4 z-10 flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl shadow-lg text-sm font-semibold transition"
+                title="グリッドなし PNG でダウンロード"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+                画像保存
+            </button>
 
 
             {/* Instruction Toast */}
@@ -1141,13 +1256,14 @@ export default function CanvasArea({
             {/* Canvas */}
             <div className="flex-grow overflow-hidden" style={{ cursor: mode === 'venue' && activeTool !== 'none' ? 'crosshair' : 'grab' }}>
                 <Stage
+                    ref={stageRef}
                     width={dimensions.width}
                     height={dimensions.height}
                     draggable={
                         !isBgEditing &&
                         (mode === 'venue'
                             ? activeTool === 'none'
-                            : false)  // ブースモードはホイールのみでパン（空白ドラッグ→範囲選択）
+                            : false)
                     }
                     onWheel={handleWheel}
                     scaleX={stageScale}
@@ -1157,6 +1273,9 @@ export default function CanvasArea({
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
                     onMouseUp={handleMouseUp}
+                    onTouchStart={handleMouseDown}
+                    onTouchMove={handleMouseMove}
+                    onTouchEnd={handleMouseUp}
                     onDragEnd={(e) => {
                         if (e.target === e.target.getStage()) {
                             setStagePos({ x: e.target.x(), y: e.target.y() });
@@ -1205,7 +1324,7 @@ export default function CanvasArea({
                                 data={obs}
                                 gridPixelSize={GRID_SIZE}
                                 isSelected={selectedObstacleId === obs.id}
-                                isEditable={mode === 'venue' && activeTool === 'none' && !isBgEditing} // 背景編集中も障害物移動不可
+                                isEditable={mode === 'venue' && activeTool === 'none' && !isBgEditing}
                                 onSelect={() => { if (mode === 'venue' && activeTool === 'none' && !isBgEditing) setSelectedObstacleId(obs.id); }}
                                 onChange={handleObstacleChange}
                             />
@@ -1257,6 +1376,24 @@ export default function CanvasArea({
                                 onDragStart={(e) => handleDragStartBooth(e, booth.id)}
                                 onDragMove={(e) => handleDragMoveBooth(e, booth.id)}
                                 onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
+                            />
+                        ))}
+                    </Layer>
+
+                    {/* テキストラベルレイヤー（最上位） */}
+                    <Layer>
+                        {textLabels.map(label => (
+                            <TextLabelComponent
+                                key={label.id}
+                                data={label}
+                                isSelected={selectedTextId === label.id}
+                                isEditable={true}
+                                stageScale={stageScale}
+                                stagePos={stagePos}
+                                containerOffset={{ left: 0, top: 0 }}
+                                onSelect={() => setSelectedTextId(label.id)}
+                                onChange={(updated) => onTextLabelsChange(textLabels.map(l => l.id === updated.id ? updated : l))}
+                                onDelete={() => onTextLabelsChange(textLabels.filter(l => l.id !== label.id))}
                             />
                         ))}
                     </Layer>

@@ -1,14 +1,14 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { Booth, Obstacle } from '@/types/layout';
+import { Booth, Obstacle, TextLabel, SaveFile } from '@/types/layout';
 import { fetchAndParseSheet } from '@/utils/csvParser';
 import { autoLayout } from '@/utils/layoutAlgorithm';
 
 const CanvasArea = dynamic(() => import('@/components/CanvasArea'), {
   ssr: false,
-  loading: () => <div className="p-10 text-center">Loading Editor...</div>,
+  loading: () => <div className="p-10 text-center text-gray-500">エディタを読み込み中...</div>,
 });
 
 export default function Home() {
@@ -22,7 +22,9 @@ export default function Home() {
     { id: '2', name: 'サンプルB', size: 2.0, category: '飲食', preferences: { wall: false }, x: 6, y: 1, rotation: 0, isPlaced: true },
   ]);
   const [obstacles, setObstacles] = useState<Obstacle[]>([]);
+  const [textLabels, setTextLabels] = useState<TextLabel[]>([]);
   const [mode, setMode] = useState<'booth' | 'venue'>('booth');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleLoadData = async () => {
     if (!csvUrl) return;
@@ -120,38 +122,97 @@ export default function Home() {
     }
   };
 
+  // === 保存処理 ===
+  const handleSave = () => {
+    const saveData: SaveFile = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      booths,
+      obstacles,
+      textLabels,
+    };
+    const blob = new Blob([JSON.stringify(saveData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `booth-layout-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // === 読み込み処理 ===
+  const handleLoadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = event.target?.result as string;
+        const data: SaveFile = JSON.parse(json);
+        if (data.booths) setBooths(data.booths);
+        if (data.obstacles) setObstacles(data.obstacles);
+        if (data.textLabels) setTextLabels(data.textLabels);
+      } catch (err) {
+        console.error('Failed to parse JSON', err);
+        setError('ファイルの読み込みに失敗しました。正しいJSONファイルを選択してください。');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   return (
-    <main className="flex min-h-screen flex-col p-4 bg-gray-50">
+    <main className="flex min-h-screen flex-col p-2 lg:p-4 bg-gray-50 font-sans">
       <header className="mb-4 space-y-4">
-        <div className="flex justify-between items-center">
+        {/* レスポンシブヘッダー */}
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">Smart Booth Allocator (Prototype)</h1>
-            <p className="text-sm text-gray-500">ブースをドラッグして移動できます</p>
+            <h1 className="text-xl lg:text-2xl font-bold text-gray-800">Smart Booth Allocator</h1>
+            <p className="text-xs lg:text-sm text-gray-500">ブースをドラッグして移動できます</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 w-full lg:w-auto">
             <button
               onClick={handleAutoLayout}
-              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition"
+              className="flex-1 lg:flex-none px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition text-sm text-center"
             >
-              自動配置 (ルールベース)
+              自動配置
             </button>
             <button
               onClick={handleAiLayout}
-              className="px-4 py-2 bg-gradient-to-r from-indigo-500 to-pink-500 text-white rounded shadow-md hover:opacity-90 transition flex items-center gap-2"
+              className="flex-1 lg:flex-none px-3 py-2 bg-gradient-to-r from-indigo-500 to-pink-500 text-white rounded shadow-md hover:opacity-90 transition flex items-center justify-center gap-1 text-sm whitespace-nowrap"
             >
-              ✨ AI自動配置 (Gemini)
+              ✨ AI自動配置
             </button>
-            <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">
-              保存 (未実装)
+            <button
+              onClick={handleSave}
+              className="flex-1 lg:flex-none px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm flex items-center justify-center gap-1"
+            >
+              💾 保存
             </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex-1 lg:flex-none px-3 py-2 border border-blue-600 text-blue-600 rounded hover:bg-blue-50 transition text-sm flex items-center justify-center gap-1 bg-white"
+            >
+              📂 読込
+            </button>
+            <input
+              type="file"
+              accept=".json"
+              ref={fileInputRef}
+              onChange={handleLoadFile}
+              className="hidden"
+            />
           </div>
         </div>
 
         {/* データインポート UI */}
-        <div className="bg-white p-4 rounded shadow flex items-center gap-4">
+        <div className="bg-white p-3 lg:p-4 rounded shadow flex flex-col lg:flex-row items-stretch lg:items-center gap-2 lg:gap-4">
           <input
             type="text"
-            placeholder="Google Sheets CSV URL (e.g. https://docs.google.com/.../pub?output=csv)"
+            placeholder="Google Sheets CSV URL"
             className="flex-grow border border-gray-300 rounded px-3 py-2 text-sm text-gray-800 bg-white"
             value={csvUrl}
             onChange={(e) => setCsvUrl(e.target.value)}
@@ -159,20 +220,22 @@ export default function Home() {
           <button
             onClick={handleLoadData}
             disabled={loading}
-            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 text-sm whitespace-nowrap"
+            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 text-sm font-bold shadow-sm transition"
           >
-            {loading ? '読み込み中...' : 'データをロード'}
+            {loading ? '読込中...' : 'データをロード'}
           </button>
         </div>
-        {error && <p className="text-red-500 text-sm">{error}</p>}
+        {error && <p className="text-red-500 text-sm px-1">{error}</p>}
       </header>
 
-      <div className="flex-grow w-full h-[70vh] bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative">
+      <div className="flex-grow w-full h-[60vh] lg:h-[75vh] bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative touch-none">
         <CanvasArea
           booths={booths}
           onBoothsChange={setBooths}
           obstacles={obstacles}
           onObstaclesChange={setObstacles}
+          textLabels={textLabels}
+          onTextLabelsChange={setTextLabels}
           mode={mode}
           onModeChange={setMode}
         />

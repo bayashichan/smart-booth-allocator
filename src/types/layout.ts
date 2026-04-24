@@ -60,3 +60,23 @@ export interface LayoutState {
   grid: GridConfig;
   booths: Booth[];
 }
+
+export interface TextLabel {
+  id: string;
+  text: string;
+  x: number;      // ピクセル座標（グリッド非依存）
+  y: number;
+  fontSize: number;
+  color: string;
+  fontStyle?: string; // 'bold' | 'italic' | ''
+  rotation?: number;
+}
+
+// 保存ファイル形式
+export interface SaveFile {
+  version: number;
+  savedAt: string;
+  booths: Booth[];
+  obstacles: Obstacle[];
+  textLabels: TextLabel[];
+}
