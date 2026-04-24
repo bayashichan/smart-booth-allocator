@@ -30,12 +30,40 @@ export default function Home() {
     setError('');
     try {
       const data = await fetchAndParseSheet(csvUrl);
-      const initialData = data.map((b, i) => ({
-        ...b,
-        x: i % 10,
-        y: i % 10,
-        isPlaced: false
-      }));
+
+      // 重ならないように左→右→折り返しでグリッドパッキング配置
+      const GRID_UNIT_MM  = 450;  // 1マスのmm（CanvasAreaと合わせる）
+      const BASE_WIDTH_MM = 1800; // 基本卓の幅mm
+      const BASE_DEPTH_MM = 450;  // 基本卓の奥行mm
+      const GRID_COLS     = 80;   // 最大列数
+
+      const placed: { x: number; y: number; w: number; h: number }[] = [];
+
+      const isColliding = (x: number, y: number, w: number, h: number) =>
+        placed.some(r =>
+          x < r.x + r.w && x + w > r.x &&
+          y < r.y + r.h && y + h > r.y
+        );
+
+      const findFreePos = (w: number, h: number) => {
+        for (let row = 0; row < 200; row++) {
+          for (let col = 0; col + w <= GRID_COLS; col++) {
+            if (!isColliding(col, row, w, h)) return { x: col, y: row };
+          }
+        }
+        return { x: 0, y: 0 };
+      };
+
+      const initialData = data.map((b) => {
+        const widthMm = b.sizeMm ? b.sizeMm.width : b.size * BASE_WIDTH_MM;
+        const depthMm = b.sizeMm ? b.sizeMm.depth : BASE_DEPTH_MM;
+        const w = Math.max(1, Math.round(widthMm / GRID_UNIT_MM));
+        const h = Math.max(1, Math.round(depthMm / GRID_UNIT_MM));
+        const pos = findFreePos(w, h);
+        placed.push({ ...pos, w, h });
+        return { ...b, x: pos.x, y: pos.y, isPlaced: false };
+      });
+
       setBooths(initialData);
     } catch (err) {
       console.error(err);
