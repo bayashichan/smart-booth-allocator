@@ -34,6 +34,9 @@ export default function CanvasArea({
     const [stageScale, setStageScale] = useState(1);
     const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
+    // AI プロバイダー選択
+    const [aiProvider, setAiProvider] = useState<'gemini' | 'groq'>('gemini');
+
     // Global Config State
     const [gridUnitMm, setGridUnitMm] = useState(450);
     const [baseTableWidthMm, setBaseTableWidthMm] = useState(1800);
@@ -771,10 +774,26 @@ export default function CanvasArea({
                 </div>
             )}
 
-            {/* AI Scan Button - Bottom Right */}
+            {/* AI解析パネル - Bottom Right */}
             {mode === 'venue' && (
-                <div className="absolute bottom-4 right-4 z-10">
-                    <label className="flex items-center gap-2 p-3 bg-white hover:bg-blue-50 rounded-full shadow-lg cursor-pointer border border-blue-100 transition-all">
+                <div className="absolute bottom-4 right-4 z-10 bg-white rounded-2xl shadow-lg border border-blue-100 overflow-hidden">
+                    {/* プロバイダー選択タブ */}
+                    <div className="flex border-b border-gray-100">
+                        <button
+                            onClick={() => setAiProvider('gemini')}
+                            className={`flex-1 px-3 py-1.5 text-xs font-semibold transition ${aiProvider === 'gemini' ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-500' : 'text-gray-400 hover:text-gray-600'}`}
+                        >
+                            Gemini
+                        </button>
+                        <button
+                            onClick={() => setAiProvider('groq')}
+                            className={`flex-1 px-3 py-1.5 text-xs font-semibold transition ${aiProvider === 'groq' ? 'bg-orange-50 text-orange-700 border-b-2 border-orange-500' : 'text-gray-400 hover:text-gray-600'}`}
+                        >
+                            Groq
+                        </button>
+                    </div>
+                    {/* 解析ボタン */}
+                    <label className={`flex items-center gap-2 px-4 py-3 cursor-pointer transition-all ${aiProvider === 'groq' ? 'hover:bg-orange-50' : 'hover:bg-blue-50'}`}>
                         <input
                             type="file"
                             accept="image/*"
@@ -782,35 +801,41 @@ export default function CanvasArea({
                             onChange={async (e) => {
                                 const file = e.target.files?.[0];
                                 if (!file) return;
-                                const confirmScan = window.confirm('画像を解析して障害物を配置しますか？\n（現在の配置に追加されます）\n※下絵として読み込む場合は「下絵読込」を使用してください');
+                                const confirmScan = window.confirm(`${aiProvider === 'groq' ? 'Groq (LLaMA Vision)' : 'Gemini'} で図面を解析して障害物を配置しますか？\n（現在の配置に追加されます）`);
                                 if (!confirmScan) return;
                                 try {
                                     const reader = new FileReader();
                                     reader.onload = async (event) => {
                                         const base64 = event.target?.result as string;
-                                        // TODO: Loading state
                                         const res = await fetch('/api/analyze-venue', {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ image: base64 }),
+                                            body: JSON.stringify({ image: base64, provider: aiProvider }),
                                         });
-                                        if (!res.ok) throw new Error('解析失敗');
-                                        const newObstacles = await res.json();
+                                        if (!res.ok) {
+                                            const err = await res.json().catch(() => ({}));
+                                            throw new Error(err.error || '解析失敗');
+                                        }
+                                        const data = await res.json();
+                                        // レスポンスは { provider, obstacles } 形式
+                                        const newObstacles = Array.isArray(data) ? data : (data.obstacles || []);
                                         onObstaclesChange([...obstacles, ...newObstacles]);
-                                        alert(`解析完了: ${newObstacles.length}個のオブジェクトを検出しました`);
+                                        alert(`解析完了 (${data.provider || aiProvider}): ${newObstacles.length}個のオブジェクトを検出しました`);
                                     };
                                     reader.readAsDataURL(file);
-                                } catch (err) {
-                                    alert('エラーが発生しました');
+                                } catch (err: any) {
+                                    alert(`エラー: ${err.message || 'エラーが発生しました'}`);
                                 }
                             }}
                         />
-                        <div className="text-blue-500">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                        <div className={aiProvider === 'groq' ? 'text-orange-500' : 'text-blue-500'}>
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
                             </svg>
                         </div>
-                        <span className="font-bold text-blue-600">AI自動解析</span>
+                        <span className={`font-bold text-sm ${aiProvider === 'groq' ? 'text-orange-600' : 'text-blue-600'}`}>
+                            AI自動解析
+                        </span>
                     </label>
                 </div>
             )}
