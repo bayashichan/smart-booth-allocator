@@ -12,13 +12,15 @@ interface BoothUnitProps {
     baseTableDepthMm?: number;
     fontSize?: number;
     isSelected?: boolean;
+    categoryColors?: Record<string, { stroke: string; fill: string }>; // カスタムカラー上書き
     onDragStart?: (e: any) => void;
     onDragEnd?: (e: any) => void;
     onClick?: (e: any) => void;
     draggable?: boolean;
 }
 
-const CATEGORY_COLORS: Record<VendorCategory, { stroke: string; fill: string }> = {
+// デフォルトのカテゴリ色
+const DEFAULT_CATEGORY_COLORS: Record<VendorCategory, { stroke: string; fill: string }> = {
     '占い・スピリチュアル': { stroke: '#7c3aed', fill: '#ede9fe' },
     '物販':                 { stroke: '#0284c7', fill: '#e0f2fe' },
     'ボディケア・美容':     { stroke: '#db2777', fill: '#fce7f3' },
@@ -35,6 +37,7 @@ export default function BoothUnit({
     baseTableDepthMm = 450,
     fontSize = 14,
     isSelected = false,
+    categoryColors = {},
     onDragStart,
     onDragEnd,
     onClick,
@@ -47,14 +50,12 @@ export default function BoothUnit({
     const widthPx = mmToPx(widthMm);
     const heightPx = mmToPx(depthMm);
 
-    const colors = CATEGORY_COLORS[data.category] ?? CATEGORY_COLORS['その他'];
+    // カスタムカラーが設定されていればそれを使う
+    const colors = categoryColors[data.category] ?? DEFAULT_CATEGORY_COLORS[data.category] ?? DEFAULT_CATEGORY_COLORS['その他'];
+
     const displayText = data.seatNumber ? data.seatNumber : data.name;
 
     const rot = data.rotation ?? 0;
-
-    // テキストを常に正立させる：Groupが rot 度回転しているので -rot で逆回転させる
-    // テキスト中央を回転軸にし (offsetX/offsetY)、ボックス中央に配置 (x/y = 中心点)
-    // 90/270 度回転時は幅と高さを入れ替えてテキストが矩形内に収まるようにする
     const textAreaWidth  = (rot === 90 || rot === 270) ? heightPx - 8 : widthPx - 8;
     const textAreaHeight = (rot === 90 || rot === 270) ? widthPx : heightPx;
 

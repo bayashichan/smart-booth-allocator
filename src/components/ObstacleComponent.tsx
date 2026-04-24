@@ -6,34 +6,39 @@ import { Obstacle } from '@/types/layout';
 
 interface ObstacleComponentProps {
     data: Obstacle;
-    gridPixelSize: number; // 追加
+    gridPixelSize: number;
     isSelected: boolean;
     isEditable: boolean;
     onSelect: () => void;
     onChange: (newAttrs: Obstacle) => void;
 }
 
+// タイプごとのデフォルト色
+const DEFAULT_COLORS: Record<string, string> = {
+    wall:   '#607d8b',
+    column: '#795548',
+    void:   '#000000',
+};
+
 export default function ObstacleComponent({
     data,
-    gridPixelSize, // 追加
+    gridPixelSize,
     isSelected,
     isEditable,
     onSelect,
     onChange,
 }: ObstacleComponentProps) {
     const shapeRef = useRef<any>(null);
-    const trRef = useRef<any>(null);
+    const trRef    = useRef<any>(null);
 
     useEffect(() => {
         if (isSelected && isEditable) {
-            // 選択状態かつ編集モードならTransformerをアタッチ
             trRef.current?.nodes([shapeRef.current]);
             trRef.current?.getLayer()?.batchDraw();
         }
     }, [isSelected, isEditable]);
 
     const handleDragEnd = (e: any) => {
-        // ピクセル座標 -> グリッド座標に変換して保存
         onChange({
             ...data,
             x: Math.round(e.target.x() / gridPixelSize),
@@ -42,54 +47,30 @@ export default function ObstacleComponent({
     };
 
     const handleTransformEnd = () => {
-        // Transformerによる変形後の値を反映
         const node = shapeRef.current;
         if (!node) return;
-
         const scaleX = node.scaleX();
         const scaleY = node.scaleY();
-
-        // スケールをリセットして幅・高さに適用する (その方が管理しやすい)
         node.scaleX(1);
         node.scaleY(1);
-
-        // ピクセルサイズ -> グリッドサイズに変換
-        const newWidth = Math.max(1, Math.round((node.width() * scaleX) / gridPixelSize));
+        const newWidth  = Math.max(1, Math.round((node.width()  * scaleX) / gridPixelSize));
         const newHeight = Math.max(1, Math.round((node.height() * scaleY) / gridPixelSize));
-
         onChange({
             ...data,
             x: Math.round(node.x() / gridPixelSize),
             y: Math.round(node.y() / gridPixelSize),
-            width: newWidth,
+            width:  newWidth,
             height: newHeight,
             rotation: node.rotation(),
         });
     };
 
-    // タイプごとの色設定
-    const getColor = () => {
-        switch (data.type) {
-            case 'column': return '#795548'; // 茶色
-            case 'wall': return '#607d8b';   // グレー
-            case 'void': return '#000000';   // 黒 (穴)
-            default: return '#9e9e9e';
-        }
-    };
+    const strokeColor = data.color ?? DEFAULT_COLORS[data.type] ?? '#607d8b';
+    const strokeW     = data.strokeWidth ?? 2;
 
-    const getLabel = () => {
-        switch (data.type) {
-            case 'column': return '柱';
-            case 'wall': return '壁';
-            case 'void': return '無効';
-            default: return '';
-        }
-    };
-
-    // 表示用のピクセルサイズを計算
-    const pixelX = data.x * gridPixelSize;
-    const pixelY = data.y * gridPixelSize;
-    const pixelWidth = data.width * gridPixelSize;
+    const pixelX      = data.x * gridPixelSize;
+    const pixelY      = data.y * gridPixelSize;
+    const pixelWidth  = data.width  * gridPixelSize;
     const pixelHeight = data.height * gridPixelSize;
 
     return (
@@ -106,38 +87,42 @@ export default function ObstacleComponent({
                 height={pixelHeight}
                 rotation={data.rotation}
             >
+                {/* アウトラインのみ描画（塗りつぶしなし） */}
                 <Rect
                     ref={shapeRef}
                     width={pixelWidth}
                     height={pixelHeight}
-                    fill={getColor()}
-                    opacity={0.8}
-                    stroke={isSelected ? '#2196f3' : '#333'}
-                    strokeWidth={isSelected ? 2 : 1}
+                    fill="transparent"
+                    stroke={isSelected ? '#2196f3' : strokeColor}
+                    strokeWidth={isSelected ? strokeW + 1 : strokeW}
+                    dash={isSelected ? [6, 3] : undefined}
                     onTransformEnd={handleTransformEnd}
                 />
-                <Text
-                    text={getLabel()}
-                    fontSize={Math.max(12, gridPixelSize / 3)}
-                    fill="#fff"
-                    padding={5}
-                    align="center"
-                    width={pixelWidth}
-                />
+                {/* 選択時はラベルを中央に表示 */}
+                {isSelected && (
+                    <Text
+                        text={data.type === 'wall' ? '壁' : data.type === 'column' ? '柱' : ''}
+                        fontSize={Math.max(10, gridPixelSize / 4)}
+                        fill={strokeColor}
+                        width={pixelWidth}
+                        height={pixelHeight}
+                        align="center"
+                        verticalAlign="middle"
+                        listening={false}
+                    />
+                )}
             </Group>
 
             {isSelected && isEditable && (
                 <Transformer
                     ref={trRef}
-                    keepRatio={false} // 縦横比固定しない
+                    keepRatio={false}
                     boundBoxFunc={(oldBox, newBox) => {
-                        // 極端に小さくならないように制限
                         if (newBox.width < gridPixelSize / 2 || newBox.height < gridPixelSize / 2) {
                             return oldBox;
                         }
                         return newBox;
                     }}
-                    // スマホ向けにアンカーサイズを大きく
                     anchorSize={20}
                     anchorCornerRadius={10}
                 />

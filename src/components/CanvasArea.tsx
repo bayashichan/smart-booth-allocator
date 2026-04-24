@@ -41,7 +41,16 @@ export default function CanvasArea({
     const [gridUnitMm, setGridUnitMm] = useState(450);
     const [baseTableWidthMm, setBaseTableWidthMm] = useState(1800);
     const [baseTableDepthMm, setBaseTableDepthMm] = useState(450);
-    const [seatFontSize, setSeatFontSize] = useState(14); // 座席番号フォントサイズ
+    const [seatFontSize, setSeatFontSize] = useState(14);
+
+    // 障害物描画設定
+    const [obstacleColor, setObstacleColor] = useState('#607d8b');
+    const [obstacleStrokeWidth, setObstacleStrokeWidth] = useState(2);
+    const [obstacleDimW, setObstacleDimW] = useState(1800); // mm
+    const [obstacleDimH, setObstacleDimH] = useState(450);  // mm
+
+    // ブース カテゴリ別カラーマップ
+    const [categoryColors, setCategoryColors] = useState<Record<string, { stroke: string; fill: string }>>({});
 
     // Painting / Line Tool State
     const [activeTool, setActiveTool] = useState<ToolType>('none');
@@ -431,16 +440,18 @@ export default function CanvasArea({
                 id: `obs-${Date.now()}`,
                 x: previewRect.x,
                 y: previewRect.y,
-                width: previewRect.w,
+                width:  previewRect.w,
                 height: previewRect.h,
                 rotation: 0,
                 type: obstacleType,
+                color: obstacleColor,
+                strokeWidth: obstacleStrokeWidth,
             };
             onObstaclesChange([...obstacles, newObstacle]);
         }
 
         isPaintingRef.current = false;
-        dragStartRef.current = null;
+        dragStartRef.current  = null;
         setPreviewRect(null);
     };
 
@@ -713,9 +724,10 @@ export default function CanvasArea({
             )}
 
 
-            {/* ブース配置モードのツールバー（フォントサイズ） */}
+            {/* ブース配置モードのツールバー */}
             {mode === 'booth' && (
-                <div className="absolute top-20 left-4 z-10 bg-white/90 backdrop-blur shadow-xl rounded-xl p-3 border border-blue-100 animate-in slide-in-from-left-4 flex flex-col gap-2 w-56">
+                <div className="absolute top-20 left-4 z-10 bg-white/90 backdrop-blur shadow-xl rounded-xl p-3 border border-blue-100 animate-in slide-in-from-left-4 flex flex-col gap-3 w-64">
+                    {/* 文字サイズ */}
                     <div className="flex items-center gap-2">
                         <span className="text-xs text-gray-500 whitespace-nowrap">文字サイズ:</span>
                         <input
@@ -728,6 +740,44 @@ export default function CanvasArea({
                             className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                         />
                         <span className="text-xs font-bold text-gray-700 w-6 text-right">{seatFontSize}</span>
+                    </div>
+
+                    {/* カテゴリカラー */}
+                    <div className="border-t border-gray-100 pt-2">
+                        <p className="text-[11px] font-semibold text-gray-500 mb-2">カテゴリカラー</p>
+                        {([
+                            { key: '占い・スピリチュアル', def: '#7c3aed' },
+                            { key: '物販',                 def: '#0284c7' },
+                            { key: 'ボディケア・美容',     def: '#db2777' },
+                            { key: '飲食',                 def: '#ea580c' },
+                            { key: 'ワークショップ',       def: '#16a34a' },
+                            { key: 'その他',               def: '#6b7280' },
+                        ] as const).map(({ key, def }) => {
+                            const cur = categoryColors[key]?.stroke ?? def;
+                            return (
+                                <div key={key} className="flex items-center gap-2 mb-1">
+                                    <input
+                                        type="color"
+                                        value={cur}
+                                        onChange={(e) => {
+                                            const c = e.target.value;
+                                            setCategoryColors(prev => ({
+                                                ...prev,
+                                                [key]: { stroke: c, fill: c + '22' }
+                                            }));
+                                        }}
+                                        className="w-6 h-6 rounded border border-gray-200 cursor-pointer p-0"
+                                    />
+                                    <span className="text-[11px] text-gray-600 truncate">{key}</span>
+                                    {categoryColors[key] && (
+                                        <button
+                                            className="text-[10px] text-gray-400 hover:text-red-500 ml-auto"
+                                            onClick={() => setCategoryColors(prev => { const n = {...prev}; delete n[key]; return n; })}
+                                        >↩</button>
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
                     <p className="text-xs text-gray-400">Shift+クリック or 空白ドラッグ→範囲選択</p>
                 </div>
@@ -774,6 +824,72 @@ export default function CanvasArea({
                             <span className="text-[10px] font-medium text-red-600 leading-tight text-center">消しゴム</span>
                         </button>
                     </div>
+
+                    {/* 障害物の描画設定（壁/柱ペン選択時のみ） */}
+                    {(activeTool === 'wall' || activeTool === 'column') && (
+                        <div className="w-full border-t border-gray-100 pt-2 flex flex-col gap-2 px-1">
+                            {/* 色・線幅 */}
+                            <div className="flex items-center gap-2">
+                                <label className="text-[10px] text-gray-500 whitespace-nowrap">線色:</label>
+                                <input
+                                    type="color"
+                                    value={obstacleColor}
+                                    onChange={(e) => setObstacleColor(e.target.value)}
+                                    className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0.5"
+                                />
+                                <label className="text-[10px] text-gray-500 whitespace-nowrap">太さ:</label>
+                                <input
+                                    type="number"
+                                    min={1} max={20} step={1}
+                                    value={obstacleStrokeWidth}
+                                    onChange={(e) => setObstacleStrokeWidth(Number(e.target.value))}
+                                    className="w-10 border rounded px-1 text-xs text-gray-800"
+                                />
+                                <span className="text-[10px] text-gray-400">px</span>
+                            </div>
+                            {/* 寸法指定 */}
+                            <div className="flex items-center gap-1">
+                                <label className="text-[10px] text-gray-500 whitespace-nowrap">W:</label>
+                                <input
+                                    type="number"
+                                    min={10} step={10}
+                                    value={obstacleDimW}
+                                    onChange={(e) => setObstacleDimW(Number(e.target.value))}
+                                    className="w-14 border rounded px-1 text-xs text-gray-800"
+                                />
+                                <label className="text-[10px] text-gray-500">H:</label>
+                                <input
+                                    type="number"
+                                    min={10} step={10}
+                                    value={obstacleDimH}
+                                    onChange={(e) => setObstacleDimH(Number(e.target.value))}
+                                    className="w-14 border rounded px-1 text-xs text-gray-800"
+                                />
+                                <span className="text-[10px] text-gray-400">mm</span>
+                            </div>
+                            {/* 寸法クリック配置ボタン */}
+                            <button
+                                className="text-[11px] bg-orange-50 hover:bg-orange-100 text-orange-700 rounded py-1 px-2 font-medium transition"
+                                onClick={() => {
+                                    // クリックなしで現在のグリッド原点に即配置
+                                    const wGrid = Math.max(1, Math.round(obstacleDimW / gridUnitMm));
+                                    const hGrid = Math.max(1, Math.round(obstacleDimH / gridUnitMm));
+                                    const newObs: Obstacle = {
+                                        id: `obs-${Date.now()}`,
+                                        x: 1, y: 1,
+                                        width: wGrid, height: hGrid,
+                                        rotation: 0,
+                                        type: activeTool === 'wall' ? 'wall' : 'column',
+                                        color: obstacleColor,
+                                        strokeWidth: obstacleStrokeWidth,
+                                    };
+                                    onObstaclesChange([...obstacles, newObs]);
+                                }}
+                            >
+                                寸法で配置 ({obstacleDimW}×{obstacleDimH}mm)
+                            </button>
+                        </div>
+                    )}
 
                     <div className="h-px bg-gray-300 w-full my-1"></div>
 
@@ -1031,10 +1147,10 @@ export default function CanvasArea({
                                 y={previewRect.y * GRID_SIZE}
                                 width={previewRect.w * GRID_SIZE}
                                 height={previewRect.h * GRID_SIZE}
-                                fill={activeTool === 'wall' ? '#607d8b' : '#795548'}
-                                opacity={0.5}
-                                stroke="#2196f3"
-                                strokeWidth={2}
+                                fill="transparent"
+                                stroke={obstacleColor}
+                                strokeWidth={obstacleStrokeWidth}
+                                opacity={0.7}
                                 dash={[4, 4]}
                             />
                         )}
@@ -1068,6 +1184,7 @@ export default function CanvasArea({
                                     baseTableDepthMm={baseTableDepthMm}
                                     fontSize={seatFontSize}
                                     isSelected={selectedBoothIds.has(booth.id)}
+                                    categoryColors={categoryColors}
                                     draggable={mode === 'booth'}
                                     onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
                                 />

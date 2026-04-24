@@ -43,6 +43,8 @@ export interface Obstacle {
   height: number;
   rotation: number;
   type: 'column' | 'wall' | 'void';
+  color?: string;       // 実線の色（任意）
+  strokeWidth?: number; // 線の太さ（px、任意）
 }
 
 export interface Entrance {
