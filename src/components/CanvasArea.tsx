@@ -68,6 +68,9 @@ export default function CanvasArea({
     // ドラッグ範囲選択
     const [dragSelect, setDragSelect] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
     const isDragSelectingRef = useRef(false);
+    // 複数選択ドラッグ追随用（ドラッグ開始時の各ブース位置を記憶）
+    const multiDragStartRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+    const multiDragAnchorRef = useRef<{ x: number; y: number } | null>(null); // ドラッグ開始ピクセル
 
     // Background Image State
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
@@ -478,42 +481,64 @@ export default function CanvasArea({
         if (mode === 'venue') return;
         const rawX = Math.round(e.target.x() / GRID_SIZE);
         const rawY = Math.round(e.target.y() / GRID_SIZE);
-        const dx = rawX - (booths.find(b => b.id === id)?.x ?? 0);
-        const dy = rawY - (booths.find(b => b.id === id)?.y ?? 0);
 
         // 複数選択中は全て移動（重なりチェック付き）
         if (selectedBoothIds.has(id) && selectedBoothIds.size > 1) {
-            // 仮に全員を移動させた状態のboothListを作って判定
-            let tentative = booths.map(b =>
-                selectedBoothIds.has(b.id) ? { ...b, x: b.x + dx, y: b.y + dy, isPlaced: true } : b
-            );
-            // 各移動ブース同士の重なりは許容（グループ全体で移動）
-            // 選択外のブースとの重なりだけチェック
+            const startPos = multiDragStartRef.current.get(id);
+            const anchor   = multiDragAnchorRef.current;
+            if (!startPos || !anchor) {
+                // フォールバック: 差分方式
+                const orig = booths.find(b => b.id === id);
+                const dx = rawX - (orig?.x ?? 0);
+                const dy = rawY - (orig?.y ?? 0);
+                const tentative = booths.map(b =>
+                    selectedBoothIds.has(b.id) ? { ...b, x: b.x + dx, y: b.y + dy, isPlaced: true } : b
+                );
+                onBoothsChange(tentative);
+                multiDragStartRef.current.clear();
+                multiDragAnchorRef.current = null;
+                return;
+            }
+            // ドラッグ開始位置からの差分（グリッド単位）
+            const dx = rawX - startPos.x;
+            const dy = rawY - startPos.y;
+            const tentative = booths.map(b => {
+                if (!selectedBoothIds.has(b.id)) return b;
+                const orig = multiDragStartRef.current.get(b.id);
+                if (!orig) return b;
+                return { ...b, x: orig.x + dx, y: orig.y + dy, isPlaced: true };
+            });
+            // 選択外との衝突チェック
             const hasCollision = Array.from(selectedBoothIds).some(bid => {
                 const nb = tentative.find(b => b.id === bid);
                 if (!nb) return false;
                 return tentative.some(b => {
-                    if (selectedBoothIds.has(b.id)) return false; // 同グループは無視
+                    if (selectedBoothIds.has(b.id)) return false;
                     const bounds = getBoothGridBounds(b);
                     const widthMm = nb.sizeMm ? nb.sizeMm.width : nb.size * baseTableWidthMm;
                     const depthMm = nb.sizeMm ? nb.sizeMm.depth : baseTableDepthMm;
                     const rot = nb.rotation ?? 0;
                     const mw = (rot === 90 || rot === 270) ? depthMm / gridUnitMm : widthMm / gridUnitMm;
                     const mh = (rot === 90 || rot === 270) ? widthMm / gridUnitMm : depthMm / gridUnitMm;
-                    return (
-                        nb.x < bounds.x + bounds.w && nb.x + mw > bounds.x &&
-                        nb.y < bounds.y + bounds.h && nb.y + mh > bounds.y
-                    );
+                    return nb.x < bounds.x + bounds.w && nb.x + mw > bounds.x &&
+                           nb.y < bounds.y + bounds.h && nb.y + mh > bounds.y;
                 });
             });
             if (!hasCollision) {
                 onBoothsChange(tentative);
+                // 他の選択ブースを正しい位置にアニメーション
+                tentative.forEach(b => {
+                    if (b.id !== id && selectedBoothIds.has(b.id)) {
+                        // Konvaノードを直接動かす手段がないため state更新のみで対応
+                    }
+                });
             } else {
-                // 重なる場合は元の位置に戻す
-                const orig = booths.find(b => b.id === id);
+                // 衝突 → ドラッグしたブースだけ元に戻す
+                const orig = multiDragStartRef.current.get(id);
                 e.target.to({ x: (orig?.x ?? rawX) * GRID_SIZE, y: (orig?.y ?? rawY) * GRID_SIZE, duration: 0.1 });
-                return;
             }
+            multiDragStartRef.current.clear();
+            multiDragAnchorRef.current = null;
         } else {
             // 単体移動：重なるなら最近傍の空きへスナップ
             const pos = findFreePosition(id, rawX, rawY, booths);
@@ -523,6 +548,20 @@ export default function CanvasArea({
             return;
         }
         e.target.to({ x: rawX * GRID_SIZE, y: rawY * GRID_SIZE, duration: 0.1 });
+    };
+
+    // 複数選択ドラッグ開始
+    const handleDragStartBooth = (e: any, id: string) => {
+        if (mode === 'venue') return;
+        if (selectedBoothIds.has(id) && selectedBoothIds.size > 1) {
+            // 全選択ブースの開始座標を記憶
+            multiDragStartRef.current = new Map(
+                booths
+                    .filter(b => selectedBoothIds.has(b.id))
+                    .map(b => [b.id, { x: b.x, y: b.y }])
+            );
+            multiDragAnchorRef.current = { x: e.target.x(), y: e.target.y() };
+        }
     };
 
     // Booth Click Handler (Shift で複数選択)
@@ -1078,7 +1117,12 @@ export default function CanvasArea({
                 <Stage
                     width={dimensions.width}
                     height={dimensions.height}
-                    draggable={!isBgEditing && (mode === 'booth' || activeTool === 'none')}
+                    draggable={
+                        !isBgEditing &&
+                        (mode === 'venue'
+                            ? activeTool === 'none'
+                            : false)  // ブースモードはホイールのみでパン（空白ドラッグ→範囲選択）
+                    }
                     onWheel={handleWheel}
                     scaleX={stageScale}
                     scaleY={stageScale}
@@ -1186,6 +1230,7 @@ export default function CanvasArea({
                                     isSelected={selectedBoothIds.has(booth.id)}
                                     categoryColors={categoryColors}
                                     draggable={mode === 'booth'}
+                                    onDragStart={(e) => handleDragStartBooth(e, booth.id)}
                                     onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
                                 />
                             </Group>
