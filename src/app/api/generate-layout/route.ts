@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
     3. Ensure at least 3 grids of aisle space between booths.
     4. Do not overlap with obstacles or other booths.
     5. Booth orientation (rotation) can be 0, 90, 180, 270.
+    6. CRITICAL: All booths MUST be placed strictly within the venue bounds (0 <= x < ${width} and 0 <= y < ${height}). Do NOT place any booth outside this area.
 
     # Output Format
     Return ONLY a valid JSON array of objects. No markdown formatting.

@@ -24,6 +24,11 @@ export default function Home() {
   const [obstacles, setObstacles] = useState<Obstacle[]>([]);
   const [textLabels, setTextLabels] = useState<TextLabel[]>([]);
   const [mode, setMode] = useState<'booth' | 'venue'>('booth');
+  
+  // 会場サイズ（自動配置用）
+  const [layoutCols, setLayoutCols] = useState(50);
+  const [layoutRows, setLayoutRows] = useState(50);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleLoadData = async () => {
@@ -76,10 +81,7 @@ export default function Home() {
   };
 
   const handleAutoLayout = () => {
-    // 簡易的にグリッドサイズを固定
-    const gridRows = 50;
-    const gridCols = 50;
-    const layoutedBooths = autoLayout(booths, gridRows, gridCols);
+    const layoutedBooths = autoLayout(booths, layoutRows, layoutCols);
     setBooths(layoutedBooths);
   };
 
@@ -94,8 +96,8 @@ export default function Home() {
         body: JSON.stringify({
           booths: booths,
           obstacles: obstacles, // 現在の障害物配置を送信
-          width: 50,
-          height: 50
+          width: layoutCols,
+          height: layoutRows
         }),
       });
 
@@ -173,38 +175,55 @@ export default function Home() {
             <h1 className="text-xl lg:text-2xl font-bold text-gray-800">Smart Booth Allocator</h1>
             <p className="text-xs lg:text-sm text-gray-500">ブースをドラッグして移動できます</p>
           </div>
-          <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-            <button
-              onClick={handleAutoLayout}
-              className="flex-1 lg:flex-none px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition text-sm text-center"
-            >
-              自動配置
-            </button>
-            <button
-              onClick={handleAiLayout}
-              className="flex-1 lg:flex-none px-3 py-2 bg-gradient-to-r from-indigo-500 to-pink-500 text-white rounded shadow-md hover:opacity-90 transition flex items-center justify-center gap-1 text-sm whitespace-nowrap"
-            >
-              ✨ AI自動配置
-            </button>
-            <button
-              onClick={handleSave}
-              className="flex-1 lg:flex-none px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm flex items-center justify-center gap-1"
-            >
-              💾 保存
-            </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex-1 lg:flex-none px-3 py-2 border border-blue-600 text-blue-600 rounded hover:bg-blue-50 transition text-sm flex items-center justify-center gap-1 bg-white"
-            >
-              📂 読込
-            </button>
-            <input
-              type="file"
-              accept=".json"
-              ref={fileInputRef}
-              onChange={handleLoadFile}
-              className="hidden"
-            />
+          <div className="flex flex-col items-start lg:items-end gap-2 w-full lg:w-auto">
+            {/* 会場サイズ指定UI */}
+            <div className="flex flex-wrap items-center gap-2 bg-white px-3 py-1.5 rounded shadow-sm text-sm border border-gray-200 w-full lg:w-auto justify-between lg:justify-start">
+              <span className="text-gray-600 font-medium whitespace-nowrap">会場サイズ(マス):</span>
+              <div className="flex gap-2">
+                <label className="flex items-center gap-1">
+                  <span className="text-gray-500 text-xs">横</span>
+                  <input type="number" min={10} max={200} step={5} value={layoutCols} onChange={e => setLayoutCols(Number(e.target.value))} className="w-16 border rounded px-1 py-0.5 text-right bg-white" />
+                </label>
+                <label className="flex items-center gap-1">
+                  <span className="text-gray-500 text-xs">縦</span>
+                  <input type="number" min={10} max={200} step={5} value={layoutRows} onChange={e => setLayoutRows(Number(e.target.value))} className="w-16 border rounded px-1 py-0.5 text-right bg-white" />
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+              <button
+                onClick={handleAutoLayout}
+                className="flex-1 lg:flex-none px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition text-sm text-center"
+              >
+                自動配置
+              </button>
+              <button
+                onClick={handleAiLayout}
+                className="flex-1 lg:flex-none px-3 py-2 bg-gradient-to-r from-indigo-500 to-pink-500 text-white rounded shadow-md hover:opacity-90 transition flex items-center justify-center gap-1 text-sm whitespace-nowrap"
+              >
+                ✨ AI自動配置
+              </button>
+              <button
+                onClick={handleSave}
+                className="flex-1 lg:flex-none px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm flex items-center justify-center gap-1"
+              >
+                💾 保存
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex-1 lg:flex-none px-3 py-2 border border-blue-600 text-blue-600 rounded hover:bg-blue-50 transition text-sm flex items-center justify-center gap-1 bg-white"
+              >
+                📂 読込
+              </button>
+              <input
+                type="file"
+                accept=".json"
+                ref={fileInputRef}
+                onChange={handleLoadFile}
+                className="hidden"
+              />
+            </div>
           </div>
         </div>
 
