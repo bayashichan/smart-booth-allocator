@@ -1089,9 +1089,9 @@ export default function CanvasArea({
 
             {/* Venue Editing Toolbar */}
             {mode === 'venue' && (
-                <div className="absolute top-32 lg:top-20 left-1/2 transform -translate-x-1/2 lg:left-4 lg:transform-none z-10 bg-white/90 backdrop-blur shadow-xl rounded-xl p-2 flex flex-col gap-2 border border-orange-100 animate-in slide-in-from-top-4 lg:slide-in-from-left-4 items-center w-[90vw] lg:w-auto max-w-[400px]">
+                <div className="absolute top-32 lg:top-20 left-2 lg:left-4 z-10 bg-white/95 backdrop-blur shadow-xl rounded-xl p-2 flex flex-col gap-2 border border-orange-100 animate-in slide-in-from-left-4 items-start w-max max-w-[calc(100vw-16px)] sm:max-w-[400px]">
 
-                    <div className="flex flex-wrap justify-center gap-2 w-full">
+                    <div className="flex flex-wrap gap-1 sm:gap-2 w-full">
                         <button
                             onClick={() => setActiveTool('none')}
                             className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'none' && !isBgEditing ? 'bg-gray-200 ring-2 ring-gray-300' : 'hover:bg-gray-100'}`}
