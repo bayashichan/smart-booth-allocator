@@ -112,6 +112,73 @@ export default function CanvasArea({
         }
     }, [mode]);
 
+    // --- ブースのグリッド占有矩形を取得（グリッド単位） ---
+    const getBoothGridBounds = (booth: Booth) => {
+        const widthMm  = booth.sizeMm ? booth.sizeMm.width : booth.size * baseTableWidthMm;
+        const depthMm  = booth.sizeMm ? booth.sizeMm.depth : baseTableDepthMm;
+        // 90/270度回転時は幅と奥行きを入れ替え
+        const rot = booth.rotation ?? 0;
+        const w = (rot === 90 || rot === 270)
+            ? depthMm  / gridUnitMm
+            : widthMm  / gridUnitMm;
+        const h = (rot === 90 || rot === 270)
+            ? widthMm  / gridUnitMm
+            : depthMm  / gridUnitMm;
+        return { x: booth.x, y: booth.y, w, h };
+    };
+
+    // --- 指定座標にブースを置いた場合に他と重なるか確認 ---
+    const checkBoothCollision = (movingId: string, newX: number, newY: number, boothList: Booth[]) => {
+        const moving = boothList.find(b => b.id === movingId);
+        if (!moving) return false;
+        const widthMm  = moving.sizeMm ? moving.sizeMm.width : moving.size * baseTableWidthMm;
+        const depthMm  = moving.sizeMm ? moving.sizeMm.depth : baseTableDepthMm;
+        const rot = moving.rotation ?? 0;
+        const mw = (rot === 90 || rot === 270) ? depthMm / gridUnitMm : widthMm / gridUnitMm;
+        const mh = (rot === 90 || rot === 270) ? widthMm / gridUnitMm : depthMm / gridUnitMm;
+
+        return boothList.some(b => {
+            if (b.id === movingId) return false;
+            const bounds = getBoothGridBounds(b);
+            // AABB重なり判定 (少しマージンを持たせる)
+            return (
+                newX        < bounds.x + bounds.w &&
+                newX + mw   > bounds.x &&
+                newY        < bounds.y + bounds.h &&
+                newY + mh   > bounds.y
+            );
+        });
+    };
+
+    // --- 重ならない最近傍グリッドを探す ---
+    const findFreePosition = (movingId: string, preferX: number, preferY: number, boothList: Booth[]) => {
+        for (let r = 0; r <= 20; r++) {
+            for (let dx = -r; dx <= r; dx++) {
+                for (let dy = -r; dy <= r; dy++) {
+                    if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+                    const nx = Math.max(0, preferX + dx);
+                    const ny = Math.max(0, preferY + dy);
+                    if (!checkBoothCollision(movingId, nx, ny, boothList)) {
+                        return { x: nx, y: ny };
+                    }
+                }
+            }
+        }
+        return { x: preferX, y: preferY };
+    };
+
+    // --- 下絵をbase64に変換 ---
+    const getBgImageBase64 = (): string | null => {
+        if (!bgImage) return null;
+        const canvas = document.createElement('canvas');
+        canvas.width  = bgImage.naturalWidth;
+        canvas.height = bgImage.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(bgImage, 0, 0);
+        return canvas.toDataURL('image/png');
+    };
+
     // --- Background Image Handlers ---
 
     const handleBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -398,21 +465,53 @@ export default function CanvasArea({
 
     const handleDragEndBooth = (e: any, id: string) => {
         if (mode === 'venue') return;
-        const x = Math.round(e.target.x() / GRID_SIZE);
-        const y = Math.round(e.target.y() / GRID_SIZE);
-        const dx = x - (booths.find(b => b.id === id)?.x ?? 0);
-        const dy = y - (booths.find(b => b.id === id)?.y ?? 0);
-        // 複数選択中は全て移動
+        const rawX = Math.round(e.target.x() / GRID_SIZE);
+        const rawY = Math.round(e.target.y() / GRID_SIZE);
+        const dx = rawX - (booths.find(b => b.id === id)?.x ?? 0);
+        const dy = rawY - (booths.find(b => b.id === id)?.y ?? 0);
+
+        // 複数選択中は全て移動（重なりチェック付き）
         if (selectedBoothIds.has(id) && selectedBoothIds.size > 1) {
-            const newBooths = booths.map(b =>
+            // 仮に全員を移動させた状態のboothListを作って判定
+            let tentative = booths.map(b =>
                 selectedBoothIds.has(b.id) ? { ...b, x: b.x + dx, y: b.y + dy, isPlaced: true } : b
             );
-            onBoothsChange(newBooths);
+            // 各移動ブース同士の重なりは許容（グループ全体で移動）
+            // 選択外のブースとの重なりだけチェック
+            const hasCollision = Array.from(selectedBoothIds).some(bid => {
+                const nb = tentative.find(b => b.id === bid);
+                if (!nb) return false;
+                return tentative.some(b => {
+                    if (selectedBoothIds.has(b.id)) return false; // 同グループは無視
+                    const bounds = getBoothGridBounds(b);
+                    const widthMm = nb.sizeMm ? nb.sizeMm.width : nb.size * baseTableWidthMm;
+                    const depthMm = nb.sizeMm ? nb.sizeMm.depth : baseTableDepthMm;
+                    const rot = nb.rotation ?? 0;
+                    const mw = (rot === 90 || rot === 270) ? depthMm / gridUnitMm : widthMm / gridUnitMm;
+                    const mh = (rot === 90 || rot === 270) ? widthMm / gridUnitMm : depthMm / gridUnitMm;
+                    return (
+                        nb.x < bounds.x + bounds.w && nb.x + mw > bounds.x &&
+                        nb.y < bounds.y + bounds.h && nb.y + mh > bounds.y
+                    );
+                });
+            });
+            if (!hasCollision) {
+                onBoothsChange(tentative);
+            } else {
+                // 重なる場合は元の位置に戻す
+                const orig = booths.find(b => b.id === id);
+                e.target.to({ x: (orig?.x ?? rawX) * GRID_SIZE, y: (orig?.y ?? rawY) * GRID_SIZE, duration: 0.1 });
+                return;
+            }
         } else {
-            const newBooths = booths.map(b => b.id === id ? { ...b, x, y, isPlaced: true } : b);
+            // 単体移動：重なるなら最近傍の空きへスナップ
+            const pos = findFreePosition(id, rawX, rawY, booths);
+            const newBooths = booths.map(b => b.id === id ? { ...b, x: pos.x, y: pos.y, isPlaced: true } : b);
             onBoothsChange(newBooths);
+            e.target.to({ x: pos.x * GRID_SIZE, y: pos.y * GRID_SIZE, duration: 0.1 });
+            return;
         }
-        e.target.to({ x: x * GRID_SIZE, y: y * GRID_SIZE, duration: 0.1 });
+        e.target.to({ x: rawX * GRID_SIZE, y: rawY * GRID_SIZE, duration: 0.1 });
     };
 
     // Booth Click Handler (Shift で複数選択)
@@ -776,7 +875,7 @@ export default function CanvasArea({
 
             {/* AI解析パネル - Bottom Right */}
             {mode === 'venue' && (
-                <div className="absolute bottom-4 right-4 z-10 bg-white rounded-2xl shadow-lg border border-blue-100 overflow-hidden">
+                <div className="absolute bottom-4 right-4 z-10 bg-white rounded-2xl shadow-lg border border-blue-100 overflow-hidden min-w-[200px]">
                     {/* プロバイダー選択タブ */}
                     <div className="flex border-b border-gray-100">
                         <button
@@ -792,53 +891,57 @@ export default function CanvasArea({
                             Groq
                         </button>
                     </div>
-                    {/* 解析ボタン */}
-                    <label className={`flex items-center gap-2 px-4 py-3 cursor-pointer transition-all ${aiProvider === 'groq' ? 'hover:bg-orange-50' : 'hover:bg-blue-50'}`}>
-                        <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={async (e) => {
-                                const file = e.target.files?.[0];
-                                if (!file) return;
-                                const confirmScan = window.confirm(`${aiProvider === 'groq' ? 'Groq (LLaMA Vision)' : 'Gemini'} で図面を解析して障害物を配置しますか？\n（現在の配置に追加されます）`);
+
+                    {/* 下絵がある場合は解析ボタン、ない場合はガイド */}
+                    {bgImage ? (
+                        <button
+                            className={`flex items-center gap-2 px-4 py-3 w-full transition-all ${aiProvider === 'groq' ? 'hover:bg-orange-50' : 'hover:bg-blue-50'}`}
+                            onClick={async () => {
+                                const base64 = getBgImageBase64();
+                                if (!base64) { alert('下絵の読み込みに失敗しました'); return; }
+                                const confirmScan = window.confirm(
+                                    `下絵を ${aiProvider === 'groq' ? 'Groq (LLaMA Vision)' : 'Gemini'} で解析して障害物を配置しますか？\n（現在の障害物配置に追加されます）`
+                                );
                                 if (!confirmScan) return;
                                 try {
-                                    const reader = new FileReader();
-                                    reader.onload = async (event) => {
-                                        const base64 = event.target?.result as string;
-                                        const res = await fetch('/api/analyze-venue', {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ image: base64, provider: aiProvider }),
-                                        });
-                                        if (!res.ok) {
-                                            const err = await res.json().catch(() => ({}));
-                                            throw new Error(err.error || '解析失敗');
-                                        }
-                                        const data = await res.json();
-                                        // レスポンスは { provider, obstacles } 形式
-                                        const newObstacles = Array.isArray(data) ? data : (data.obstacles || []);
-                                        onObstaclesChange([...obstacles, ...newObstacles]);
-                                        alert(`解析完了 (${data.provider || aiProvider}): ${newObstacles.length}個のオブジェクトを検出しました`);
-                                    };
-                                    reader.readAsDataURL(file);
+                                    const res = await fetch('/api/analyze-venue', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ image: base64, provider: aiProvider }),
+                                    });
+                                    if (!res.ok) {
+                                        const err = await res.json().catch(() => ({}));
+                                        throw new Error(err.error || '解析失敗');
+                                    }
+                                    const data = await res.json();
+                                    const newObstacles = Array.isArray(data) ? data : (data.obstacles || []);
+                                    onObstaclesChange([...obstacles, ...newObstacles]);
+                                    alert(`解析完了 (${data.provider || aiProvider}): ${newObstacles.length}個のオブジェクトを検出しました`);
                                 } catch (err: any) {
                                     alert(`エラー: ${err.message || 'エラーが発生しました'}`);
                                 }
                             }}
-                        />
-                        <div className={aiProvider === 'groq' ? 'text-orange-500' : 'text-blue-500'}>
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
-                            </svg>
+                        >
+                            <div className={aiProvider === 'groq' ? 'text-orange-500' : 'text-blue-500'}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+                                </svg>
+                            </div>
+                            <div className="flex flex-col items-start">
+                                <span className={`font-bold text-sm ${aiProvider === 'groq' ? 'text-orange-600' : 'text-blue-600'}`}>
+                                    下絵を解析
+                                </span>
+                                <span className="text-[10px] text-gray-400">縮尺調整済み下絵を使用</span>
+                            </div>
+                        </button>
+                    ) : (
+                        <div className="px-4 py-3 text-xs text-gray-400 text-center">
+                            先に下絵を読み込んで<br />縮尺を調整してください
                         </div>
-                        <span className={`font-bold text-sm ${aiProvider === 'groq' ? 'text-orange-600' : 'text-blue-600'}`}>
-                            AI自動解析
-                        </span>
-                    </label>
+                    )}
                 </div>
             )}
+
 
 
             {/* Instruction Toast */}
