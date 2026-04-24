@@ -12,14 +12,14 @@ interface BoothUnitProps {
     baseTableDepthMm?: number;
     fontSize?: number;
     isSelected?: boolean;
-    categoryColors?: Record<string, { stroke: string; fill: string }>; // カスタムカラー上書き
+    categoryColors?: Record<string, { stroke: string; fill: string }>;
     onDragStart?: (e: any) => void;
-    onDragEnd?: (e: any) => void;
-    onClick?: (e: any) => void;
+    onDragMove?:  (e: any) => void;
+    onDragEnd?:   (e: any) => void;
+    onClick?:     (e: any) => void;
     draggable?: boolean;
 }
 
-// デフォルトのカテゴリ色
 const DEFAULT_CATEGORY_COLORS: Record<VendorCategory, { stroke: string; fill: string }> = {
     '占い・スピリチュアル': { stroke: '#7c3aed', fill: '#ede9fe' },
     '物販':                 { stroke: '#0284c7', fill: '#e0f2fe' },
@@ -39,6 +39,7 @@ export default function BoothUnit({
     isSelected = false,
     categoryColors = {},
     onDragStart,
+    onDragMove,
     onDragEnd,
     onClick,
     draggable = true,
@@ -47,12 +48,10 @@ export default function BoothUnit({
 
     const widthMm = data.sizeMm ? data.sizeMm.width : data.size * baseTableWidthMm;
     const depthMm = data.sizeMm ? data.sizeMm.depth : baseTableDepthMm;
-    const widthPx = mmToPx(widthMm);
+    const widthPx  = mmToPx(widthMm);
     const heightPx = mmToPx(depthMm);
 
-    // カスタムカラーが設定されていればそれを使う
     const colors = categoryColors[data.category] ?? DEFAULT_CATEGORY_COLORS[data.category] ?? DEFAULT_CATEGORY_COLORS['その他'];
-
     const displayText = data.seatNumber ? data.seatNumber : data.name;
 
     const rot = data.rotation ?? 0;
@@ -61,11 +60,13 @@ export default function BoothUnit({
 
     return (
         <Group
+            id={`booth-group-${data.id}`}   // レイヤー検索用ID
             x={data.x * gridPixelSize}
             y={data.y * gridPixelSize}
             rotation={rot}
             draggable={draggable}
             onDragStart={onDragStart}
+            onDragMove={onDragMove}
             onDragEnd={onDragEnd}
             onClick={onClick}
         >
@@ -79,8 +80,6 @@ export default function BoothUnit({
                 strokeWidth={isSelected ? 3 : 2}
                 cornerRadius={2}
             />
-
-            {/* テキストは常に正立（逆回転で打ち消し） */}
             <Text
                 x={widthPx / 2}
                 y={heightPx / 2}

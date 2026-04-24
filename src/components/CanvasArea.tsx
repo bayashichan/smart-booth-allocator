@@ -68,9 +68,11 @@ export default function CanvasArea({
     // ドラッグ範囲選択
     const [dragSelect, setDragSelect] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
     const isDragSelectingRef = useRef(false);
-    // 複数選択ドラッグ追随用（ドラッグ開始時の各ブース位置を記憶）
-    const multiDragStartRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-    const multiDragAnchorRef = useRef<{ x: number; y: number } | null>(null); // ドラッグ開始ピクセル
+    // 複数選択ドラッグ追随用
+    const multiDragStartRef  = useRef<Map<string, { x: number; y: number }>>(new Map());
+    const multiDragAnchorRef = useRef<{ x: number; y: number } | null>(null);
+    // ブースレイヤーへのリフ（ノード直接操作用）
+    const boothLayerRef = useRef<any>(null);
 
     // Background Image State
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
@@ -554,7 +556,6 @@ export default function CanvasArea({
     const handleDragStartBooth = (e: any, id: string) => {
         if (mode === 'venue') return;
         if (selectedBoothIds.has(id) && selectedBoothIds.size > 1) {
-            // 全選択ブースの開始座標を記憶
             multiDragStartRef.current = new Map(
                 booths
                     .filter(b => selectedBoothIds.has(b.id))
@@ -562,6 +563,31 @@ export default function CanvasArea({
             );
             multiDragAnchorRef.current = { x: e.target.x(), y: e.target.y() };
         }
+    };
+
+    // 複数選択ドラッグ中（リアルタイム追随）
+    const handleDragMoveBooth = (e: any, id: string) => {
+        if (mode === 'venue') return;
+        if (!selectedBoothIds.has(id) || selectedBoothIds.size <= 1) return;
+        const anchor = multiDragAnchorRef.current;
+        if (!anchor || !boothLayerRef.current) return;
+
+        // ドラッグ中のピクセル差分
+        const dxPx = e.target.x() - anchor.x;
+        const dyPx = e.target.y() - anchor.y;
+
+        // 他の選択ブースをリアルタイムで移動
+        selectedBoothIds.forEach(bid => {
+            if (bid === id) return;
+            const startPos = multiDragStartRef.current.get(bid);
+            if (!startPos) return;
+            const node = boothLayerRef.current.findOne(`#booth-group-${bid}`);
+            if (node) {
+                node.x(startPos.x * GRID_SIZE + dxPx);
+                node.y(startPos.y * GRID_SIZE + dyPx);
+            }
+        });
+        boothLayerRef.current.batchDraw();
     };
 
     // Booth Click Handler (Shift で複数選択)
@@ -1199,7 +1225,7 @@ export default function CanvasArea({
                             />
                         )}
                     </Layer>
-                    <Layer opacity={mode === 'venue' ? 0.3 : 1}>
+                    <Layer ref={boothLayerRef} opacity={mode === 'venue' ? 0.3 : 1}>
                         {/* ドラッグ範囲選択の矩形 */}
                         {dragSelect && mode === 'booth' && (
                             <Rect
@@ -1216,24 +1242,22 @@ export default function CanvasArea({
                         )}
                         {/* ブース */}
                         {booths.map(booth => (
-                            <Group
+                            <BoothUnit
                                 key={booth.id}
+                                data={booth}
+                                gridPixelSize={GRID_SIZE}
+                                gridUnitMm={gridUnitMm}
+                                baseTableWidthMm={baseTableWidthMm}
+                                baseTableDepthMm={baseTableDepthMm}
+                                fontSize={seatFontSize}
+                                isSelected={selectedBoothIds.has(booth.id)}
+                                categoryColors={categoryColors}
+                                draggable={mode === 'booth'}
                                 onClick={(e) => handleBoothClick(e, booth.id)}
-                            >
-                                <BoothUnit
-                                    data={booth}
-                                    gridPixelSize={GRID_SIZE}
-                                    gridUnitMm={gridUnitMm}
-                                    baseTableWidthMm={baseTableWidthMm}
-                                    baseTableDepthMm={baseTableDepthMm}
-                                    fontSize={seatFontSize}
-                                    isSelected={selectedBoothIds.has(booth.id)}
-                                    categoryColors={categoryColors}
-                                    draggable={mode === 'booth'}
-                                    onDragStart={(e) => handleDragStartBooth(e, booth.id)}
-                                    onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
-                                />
-                            </Group>
+                                onDragStart={(e) => handleDragStartBooth(e, booth.id)}
+                                onDragMove={(e) => handleDragMoveBooth(e, booth.id)}
+                                onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
+                            />
                         ))}
                     </Layer>
                 </Stage>
