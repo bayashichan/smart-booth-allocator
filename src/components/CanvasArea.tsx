@@ -64,6 +64,9 @@ export default function CanvasArea({
     // テキストラベル 選択・スタイル設定
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [textSettings, setTextSettings] = useState({ fontSize: 20, color: '#1f2937', fontStyle: '' });
+    
+    // UI Toggles
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     // Painting / Line Tool State
     const [activeTool, setActiveTool] = useState<ToolType>('none');
@@ -1013,60 +1016,74 @@ export default function CanvasArea({
 
             {/* ブース配置モードのツールバー */}
             {mode === 'booth' && (
-                <div className="absolute top-20 left-4 z-10 bg-white/90 backdrop-blur shadow-xl rounded-xl p-3 border border-blue-100 animate-in slide-in-from-left-4 flex flex-col gap-3 w-64">
-                    {/* 文字サイズ */}
-                    <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-500 whitespace-nowrap">文字サイズ:</span>
-                        <input
-                            type="range"
-                            min={8}
-                            max={32}
-                            step={1}
-                            value={seatFontSize}
-                            onChange={(e) => setSeatFontSize(Number(e.target.value))}
-                            className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                        />
-                        <span className="text-xs font-bold text-gray-700 w-6 text-right">{seatFontSize}</span>
-                    </div>
+                <div className="absolute top-20 left-4 z-10 flex flex-col items-start gap-2">
+                    <button
+                        onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                        className={`bg-white/90 backdrop-blur shadow-md rounded-xl px-3 py-2 border border-blue-100 flex items-center gap-2 text-sm font-medium transition ${isSettingsOpen ? 'text-blue-600 bg-blue-50' : 'text-gray-600 hover:bg-gray-50'}`}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" />
+                        </svg>
+                        表示設定
+                    </button>
 
-                    {/* カテゴリカラー */}
-                    <div className="border-t border-gray-100 pt-2">
-                        <p className="text-[11px] font-semibold text-gray-500 mb-2">カテゴリカラー</p>
-                        {([
-                            { key: '占い・スピリチュアル', def: '#7c3aed' },
-                            { key: '物販',                 def: '#0284c7' },
-                            { key: 'ボディケア・美容',     def: '#db2777' },
-                            { key: '飲食',                 def: '#ea580c' },
-                            { key: 'ワークショップ',       def: '#16a34a' },
-                            { key: 'その他',               def: '#6b7280' },
-                        ] as const).map(({ key, def }) => {
-                            const cur = categoryColors[key]?.stroke ?? def;
-                            return (
-                                <div key={key} className="flex items-center gap-2 mb-1">
-                                    <input
-                                        type="color"
-                                        value={cur}
-                                        onChange={(e) => {
-                                            const c = e.target.value;
-                                            setCategoryColors(prev => ({
-                                                ...prev,
-                                                [key]: { stroke: c, fill: c + '22' }
-                                            }));
-                                        }}
-                                        className="w-6 h-6 rounded border border-gray-200 cursor-pointer p-0"
-                                    />
-                                    <span className="text-[11px] text-gray-600 truncate">{key}</span>
-                                    {categoryColors[key] && (
-                                        <button
-                                            className="text-[10px] text-gray-400 hover:text-red-500 ml-auto"
-                                            onClick={() => setCategoryColors(prev => { const n = {...prev}; delete n[key]; return n; })}
-                                        >↩</button>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                    <p className="text-xs text-gray-400">Shift+クリック or 空白ドラッグ→範囲選択</p>
+                    {isSettingsOpen && (
+                        <div className="bg-white/95 backdrop-blur shadow-xl rounded-xl p-3 border border-blue-100 animate-in slide-in-from-top-2 flex flex-col gap-3 w-56 lg:w-64 max-h-[50vh] overflow-y-auto">
+                            {/* 文字サイズ */}
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-500 whitespace-nowrap">文字サイズ:</span>
+                                <input
+                                    type="range"
+                                    min={8}
+                                    max={32}
+                                    step={1}
+                                    value={seatFontSize}
+                                    onChange={(e) => setSeatFontSize(Number(e.target.value))}
+                                    className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                />
+                                <span className="text-xs font-bold text-gray-700 w-6 text-right">{seatFontSize}</span>
+                            </div>
+
+                            {/* カテゴリカラー */}
+                            <div className="border-t border-gray-100 pt-2">
+                                <p className="text-[11px] font-semibold text-gray-500 mb-2">カテゴリカラー</p>
+                                {([
+                                    { key: '占い・スピリチュアル', def: '#7c3aed' },
+                                    { key: '物販',                 def: '#0284c7' },
+                                    { key: 'ボディケア・美容',     def: '#db2777' },
+                                    { key: '飲食',                 def: '#ea580c' },
+                                    { key: 'ワークショップ',       def: '#16a34a' },
+                                    { key: 'その他',               def: '#6b7280' },
+                                ] as const).map(({ key, def }) => {
+                                    const cur = categoryColors[key]?.stroke ?? def;
+                                    return (
+                                        <div key={key} className="flex items-center gap-2 mb-1">
+                                            <input
+                                                type="color"
+                                                value={cur}
+                                                onChange={(e) => {
+                                                    const c = e.target.value;
+                                                    setCategoryColors(prev => ({
+                                                        ...prev,
+                                                        [key]: { stroke: c, fill: c + '22' }
+                                                    }));
+                                                }}
+                                                className="w-6 h-6 rounded border border-gray-200 cursor-pointer p-0"
+                                            />
+                                            <span className="text-[11px] text-gray-600 truncate">{key}</span>
+                                            {categoryColors[key] && (
+                                                <button
+                                                    className="text-[10px] text-gray-400 hover:text-red-500 ml-auto"
+                                                    onClick={() => setCategoryColors(prev => { const n = {...prev}; delete n[key]; return n; })}
+                                                >↩</button>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <p className="text-[10px] text-gray-400 leading-tight">PC: Shift+クリック or 空白ドラッグで範囲選択</p>
+                        </div>
+                    )}
                 </div>
             )}
 
