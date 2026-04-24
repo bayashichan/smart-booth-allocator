@@ -233,9 +233,9 @@ export default function CanvasArea({
     const maxGrid = 200;
     for (let i = 0; i <= maxGrid; i++) {
         // Vertical lines
-        gridLines.push(<Line key={`v-${i}`} points={[i * GRID_SIZE, 0, i * GRID_SIZE, maxGrid * GRID_SIZE]} stroke="#eee" strokeWidth={1} listening={false} />);
+        gridLines.push(<Line key={`v-${i}`} points={[i * GRID_SIZE, 0, i * GRID_SIZE, maxGrid * GRID_SIZE]} stroke="#bbb" strokeWidth={1} listening={false} />);
         // Horizontal lines
-        gridLines.push(<Line key={`h-${i}`} points={[0, i * GRID_SIZE, maxGrid * GRID_SIZE, i * GRID_SIZE]} stroke="#eee" strokeWidth={1} listening={false} />);
+        gridLines.push(<Line key={`h-${i}`} points={[0, i * GRID_SIZE, maxGrid * GRID_SIZE, i * GRID_SIZE]} stroke="#bbb" strokeWidth={1} listening={false} />);
     }
 
     // --- Obstacle Logic ---
@@ -577,39 +577,39 @@ export default function CanvasArea({
 
                 {/* Grid & Table Setting (Venue Mode) */}
                 {mode === 'venue' && (
-                    <div className="bg-white shadow-lg rounded-xl px-4 py-2 border border-gray-200 pointer-events-auto flex items-center gap-4">
+                     <div className="bg-white shadow-lg rounded-xl px-4 py-2 border border-gray-200 pointer-events-auto flex items-center gap-4">
                         <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 font-medium whitespace-nowrap">1マス:</span>
+                            <span className="text-xs text-gray-600 font-medium whitespace-nowrap">1マス:</span>
                             <input
                                 type="number"
                                 value={gridUnitMm}
                                 onChange={(e) => setGridUnitMm(Number(e.target.value))}
-                                className="w-14 text-right border rounded px-1 text-sm bg-gray-50"
+                                className="w-14 text-right border rounded px-1 text-sm bg-white text-gray-800"
                                 step={10}
                             />
-                            <span className="text-xs text-gray-500">mm</span>
+                            <span className="text-xs text-gray-600">mm</span>
                         </div>
                         <div className="w-px h-6 bg-gray-200"></div>
                         <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 font-medium whitespace-nowrap">基本卓:</span>
+                            <span className="text-xs text-gray-600 font-medium whitespace-nowrap">基本卓:</span>
                             <input
                                 type="number"
                                 value={baseTableWidthMm}
                                 onChange={(e) => setBaseTableWidthMm(Number(e.target.value))}
-                                className="w-14 text-right border rounded px-1 text-sm bg-gray-50"
+                                className="w-14 text-right border rounded px-1 text-sm bg-white text-gray-800"
                                 step={10}
                                 title="幅"
                             />
-                            <span className="text-gray-400">x</span>
+                            <span className="text-gray-500">x</span>
                             <input
                                 type="number"
                                 value={baseTableDepthMm}
                                 onChange={(e) => setBaseTableDepthMm(Number(e.target.value))}
-                                className="w-14 text-right border rounded px-1 text-sm bg-gray-50"
+                                className="w-14 text-right border rounded px-1 text-sm bg-white text-gray-800"
                                 step={10}
                                 title="奥行"
                             />
-                            <span className="text-xs text-gray-500">mm</span>
+                            <span className="text-xs text-gray-600">mm</span>
                         </div>
                     </div>
                 )}
