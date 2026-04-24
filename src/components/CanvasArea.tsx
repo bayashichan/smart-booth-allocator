@@ -656,16 +656,22 @@ export default function CanvasArea({
             const newCenter = getCenter(p1, p2);
             const dist = getDistance(p1, p2);
 
-            if (!lastDist.current) {
+            if (!lastCenter.current) {
+                lastCenter.current = newCenter;
                 lastDist.current = dist;
+                return;
             }
 
+            // 平行移動分
+            const dx = newCenter.x - lastCenter.current.x;
+            const dy = newCenter.y - lastCenter.current.y;
+
             const pointTo = {
-                x: (newCenter.x - stage.x()) / stage.scaleX(),
-                y: (newCenter.y - stage.y()) / stage.scaleX(),
+                x: (newCenter.x - stage.x() - dx) / stage.scaleX(),
+                y: (newCenter.y - stage.y() - dy) / stage.scaleX(),
             };
 
-            const scale = stage.scaleX() * (dist / lastDist.current);
+            const scale = stage.scaleX() * (dist / (lastDist.current || dist));
             const newScale = Math.max(0.1, Math.min(scale, 5));
 
             stage.scaleX(newScale);
@@ -909,7 +915,7 @@ export default function CanvasArea({
 
             {/* Booth Edit Panel (When Selected) */}
             {selectedBooth && mode === 'booth' && (
-                <div className="absolute bottom-20 lg:bottom-auto lg:top-20 left-4 lg:left-auto right-4 z-20 bg-white/95 backdrop-blur shadow-xl rounded-xl p-3 lg:p-4 border border-blue-100 lg:w-64 animate-in slide-in-from-bottom-4 lg:slide-in-from-right-4 max-h-[40vh] lg:max-h-[80vh] overflow-y-auto">
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 lg:top-20 lg:right-4 lg:left-auto lg:translate-x-0 lg:translate-y-0 z-50 bg-white/95 backdrop-blur shadow-2xl lg:shadow-xl rounded-xl p-4 border border-blue-100 w-[90vw] lg:w-64 animate-in fade-in zoom-in-95 lg:slide-in-from-right-4 max-h-[80vh] overflow-y-auto">
                     <div className="flex justify-between items-center mb-2 border-b pb-2">
                         <h3 className="font-bold text-gray-700 truncate">{selectedBooth.name}</h3>
                         <button onClick={() => { setSelectedBoothId(null); setSelectedBoothIds(new Set()); }} className="text-gray-400 hover:text-gray-600">✕</button>
@@ -986,7 +992,7 @@ export default function CanvasArea({
 
             {/* 複数選択中のバネル */}
             {selectedBoothIds.size > 1 && mode === 'booth' && (
-                <div className="absolute bottom-20 lg:bottom-auto lg:top-20 left-4 lg:left-auto right-4 z-20 bg-white/95 backdrop-blur shadow-xl rounded-xl p-3 lg:p-4 border border-amber-200 lg:w-64 animate-in slide-in-from-bottom-4 lg:slide-in-from-right-4">
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 lg:top-20 lg:right-4 lg:left-auto lg:translate-x-0 lg:translate-y-0 z-50 bg-white/95 backdrop-blur shadow-2xl lg:shadow-xl rounded-xl p-4 border border-amber-200 w-[90vw] lg:w-64 animate-in fade-in zoom-in-95 lg:slide-in-from-right-4 max-h-[80vh] overflow-y-auto">
                     <div className="flex justify-between items-center mb-3">
                         <span className="font-bold text-amber-700">{selectedBoothIds.size}帪選択中</span>
                         <button onClick={() => { setSelectedBoothIds(new Set()); setSelectedBoothId(null); }} className="text-gray-400 hover:text-gray-600">✕</button>
