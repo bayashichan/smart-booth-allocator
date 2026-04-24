@@ -8,43 +8,45 @@ export const parseSheetData = (csvText: string): Promise<Booth[]> => {
             skipEmptyLines: true,
             complete: (results) => {
                 try {
-                    const parsedBooths: Booth[] = results.data.map((row: any, index: number) => {
-                        // 座席番号
-                        const seatNumber = String(row['座席番号'] || '').trim();
+                    const parsedBooths: Booth[] = results.data
+                        .map((row: any, index: number) => {
+                            // 座席番号
+                            const seatNumber = String(row['座席番号'] || '').trim();
 
-                        // サイズ変換（出展ブース列から判定）
-                        let size: BoothSize = 1.0;
-                        const boothStr = String(row['出展ブース'] || '');
-                        if (boothStr.includes('半テーブル')) size = 0.5;
-                        else if (boothStr.includes('1テーブル')) size = 1.0;
-                        else if (boothStr.includes('2テーブル')) size = 2.0;
+                            // サイズ変換（出展ブース列から判定）
+                            let size: BoothSize = 1.0;
+                            const boothStr = String(row['出展ブース'] || '');
+                            if (boothStr.includes('半テーブル')) size = 0.5;
+                            else if (boothStr.includes('1テーブル')) size = 1.0;
+                            else if (boothStr.includes('2テーブル')) size = 2.0;
 
-                        // カテゴリ変換（出展カテゴリ列から取得）
-                        const rawCategory = String(row['出展カテゴリ'] || '').trim();
-                        const validCategories: VendorCategory[] = ['占い・スピリチュアル', '物販', 'ボディケア・美容', '飲食', 'ワークショップ'];
-                        const category: VendorCategory = validCategories.includes(rawCategory as VendorCategory)
-                            ? (rawCategory as VendorCategory)
-                            : 'その他';
+                            // カテゴリ変換（出展カテゴリ列から取得）
+                            const rawCategory = String(row['出展カテゴリ'] || '').trim();
+                            const validCategories: VendorCategory[] = ['占い・スピリチュアル', '物販', 'ボディケア・美容', '飲食', 'ワークショップ'];
+                            const category: VendorCategory = validCategories.includes(rawCategory as VendorCategory)
+                                ? (rawCategory as VendorCategory)
+                                : 'その他';
 
-                        // 壁側希望
-                        const wall = boothStr.includes('壁側');
+                            // 壁側希望
+                            const wall = boothStr.includes('壁側');
 
-                        return {
-                            id: `imported-${index + 1}`,
-                            name: row['出展名'] || `出展者 ${index + 1}`,
-                            seatNumber: seatNumber || undefined,
-                            size: size,
-                            category: category,
-                            preferences: {
-                                wall: wall,
-                            },
-                            // 初期位置は未配置または適当な場所
-                            x: 0,
-                            y: 0,
-                            rotation: 0,
-                            isPlaced: false,
-                        };
-                    });
+                            return {
+                                id: `imported-${index + 1}`,
+                                name: row['出展名'] || `出展者 ${index + 1}`,
+                                seatNumber: seatNumber || undefined,
+                                size: size,
+                                category: category,
+                                preferences: {
+                                    wall: wall,
+                                },
+                                // 初期位置は未配置または適当な場所
+                                x: 0,
+                                y: 0,
+                                rotation: 0 as const,
+                                isPlaced: false,
+                            };
+                        })
+                        .filter((booth) => booth.seatNumber !== undefined && booth.seatNumber !== '');
                     resolve(parsedBooths);
                 } catch (e) {
                     reject(e);
