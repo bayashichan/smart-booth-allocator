@@ -99,6 +99,10 @@ export default function CanvasArea({
     const [isCalibrating, setIsCalibrating] = useState(false);
     const [calibrationPoints, setCalibrationPoints] = useState<{ x: number, y: number }[]>([]);
 
+    // Pinch Zoom State
+    const lastCenter = useRef<{ x: number, y: number } | null>(null);
+    const lastDist = useRef<number>(0);
+
     useEffect(() => {
         if (isBgEditing && bgNodeRef.current && bgTrRef.current) {
             bgTrRef.current.nodes([bgNodeRef.current]);
@@ -620,6 +624,77 @@ export default function CanvasArea({
         });
     };
 
+    // --- タッチ操作（ピンチズーム・パン） ---
+    const handleTouchStart = (e: any) => {
+        // ピンチズーム開始
+        if (e.evt.touches && e.evt.touches.length === 2) {
+            e.evt.preventDefault();
+            return;
+        }
+        handleMouseDown(e);
+    };
+
+    const handleTouchMove = (e: any) => {
+        if (e.evt.touches && e.evt.touches.length === 2) {
+            e.evt.preventDefault();
+            const stage = e.target.getStage();
+            if (!stage) return;
+
+            const touch1 = e.evt.touches[0];
+            const touch2 = e.evt.touches[1];
+
+            const p1 = { x: touch1.clientX, y: touch1.clientY };
+            const p2 = { x: touch2.clientX, y: touch2.clientY };
+
+            const getDistance = (p1: any, p2: any) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+            const getCenter = (p1: any, p2: any) => ({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 });
+
+            if (!lastCenter.current) {
+                lastCenter.current = getCenter(p1, p2);
+                return;
+            }
+            const newCenter = getCenter(p1, p2);
+            const dist = getDistance(p1, p2);
+
+            if (!lastDist.current) {
+                lastDist.current = dist;
+            }
+
+            const pointTo = {
+                x: (newCenter.x - stage.x()) / stage.scaleX(),
+                y: (newCenter.y - stage.y()) / stage.scaleX(),
+            };
+
+            const scale = stage.scaleX() * (dist / lastDist.current);
+            const newScale = Math.max(0.1, Math.min(scale, 5));
+
+            stage.scaleX(newScale);
+            stage.scaleY(newScale);
+            setStageScale(newScale);
+
+            const newPos = {
+                x: newCenter.x - pointTo.x * newScale,
+                y: newCenter.y - pointTo.y * newScale,
+            };
+
+            stage.position(newPos);
+            setStagePos(newPos);
+
+            lastDist.current = dist;
+            lastCenter.current = newCenter;
+        } else {
+            // ピンチでない場合は通常のMove処理
+            handleMouseMove(e);
+        }
+    };
+
+    const handleTouchEnd = (e: any) => {
+        if (lastCenter.current) {
+            lastDist.current = 0;
+            lastCenter.current = null;
+        }
+        handleMouseUp();
+    };
     const handleDragEndBooth = (e: any, id: string) => {
         if (mode === 'venue') return;
         const rawX = Math.round(e.target.x() / GRID_SIZE);
@@ -834,7 +909,7 @@ export default function CanvasArea({
 
             {/* Booth Edit Panel (When Selected) */}
             {selectedBooth && mode === 'booth' && (
-                <div className="absolute top-20 right-4 z-20 bg-white shadow-xl rounded-xl p-4 border border-blue-100 w-64 animate-in slide-in-from-right-4">
+                <div className="absolute bottom-20 lg:bottom-auto lg:top-20 left-4 lg:left-auto right-4 z-20 bg-white/95 backdrop-blur shadow-xl rounded-xl p-3 lg:p-4 border border-blue-100 lg:w-64 animate-in slide-in-from-bottom-4 lg:slide-in-from-right-4 max-h-[40vh] lg:max-h-[80vh] overflow-y-auto">
                     <div className="flex justify-between items-center mb-2 border-b pb-2">
                         <h3 className="font-bold text-gray-700 truncate">{selectedBooth.name}</h3>
                         <button onClick={() => { setSelectedBoothId(null); setSelectedBoothIds(new Set()); }} className="text-gray-400 hover:text-gray-600">✕</button>
@@ -911,7 +986,7 @@ export default function CanvasArea({
 
             {/* 複数選択中のバネル */}
             {selectedBoothIds.size > 1 && mode === 'booth' && (
-                <div className="absolute top-20 right-4 z-20 bg-white shadow-xl rounded-xl p-4 border border-amber-200 w-64 animate-in slide-in-from-right-4">
+                <div className="absolute bottom-20 lg:bottom-auto lg:top-20 left-4 lg:left-auto right-4 z-20 bg-white/95 backdrop-blur shadow-xl rounded-xl p-3 lg:p-4 border border-amber-200 lg:w-64 animate-in slide-in-from-bottom-4 lg:slide-in-from-right-4">
                     <div className="flex justify-between items-center mb-3">
                         <span className="font-bold text-amber-700">{selectedBoothIds.size}帪選択中</span>
                         <button onClick={() => { setSelectedBoothIds(new Set()); setSelectedBoothId(null); }} className="text-gray-400 hover:text-gray-600">✕</button>
@@ -1364,9 +1439,9 @@ export default function CanvasArea({
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
                     onMouseUp={handleMouseUp}
-                    onTouchStart={handleMouseDown}
-                    onTouchMove={handleMouseMove}
-                    onTouchEnd={handleMouseUp}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
                     onDragEnd={(e) => {
                         if (e.target === e.target.getStage()) {
                             setStagePos({ x: e.target.x(), y: e.target.y() });
