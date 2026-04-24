@@ -69,6 +69,7 @@ export default function BoothUnit({
             onDragMove={onDragMove}
             onDragEnd={onDragEnd}
             onClick={onClick}
+            onTap={onClick}
         >
             <Rect
                 x={0}
