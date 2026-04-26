@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { Booth, Obstacle, TextLabel, SaveFile } from '@/types/layout';
 import { fetchAndParseSheet } from '@/utils/csvParser';
@@ -29,7 +29,35 @@ export default function Home() {
   const [layoutCols, setLayoutCols] = useState(50);
   const [layoutRows, setLayoutRows] = useState(50);
 
+  const [shareUrl, setShareUrl] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // マウント時にURLパラメータからIDを取得してレイアウトを読み込む
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('id');
+    if (id) {
+      const loadLayout = async () => {
+        setLoading(true);
+        try {
+          const res = await fetch(`/api/layouts/${id}`);
+          if (!res.ok) throw new Error('レイアウトの取得に失敗しました');
+          const data: SaveFile = await res.json();
+          if (data.booths) setBooths(data.booths);
+          if (data.obstacles) setObstacles(data.obstacles);
+          if (data.textLabels) setTextLabels(data.textLabels);
+        } catch (err) {
+          console.error(err);
+          setError('レイアウトデータの読み込みに失敗しました。URLが正しいか確認してください。');
+        } finally {
+          setLoading(false);
+        }
+      };
+      loadLayout();
+    }
+  }, []);
 
   const handleLoadData = async () => {
     if (!csvUrl) return;
@@ -124,8 +152,10 @@ export default function Home() {
     }
   };
 
-  // === 保存処理 ===
-  const handleSave = () => {
+  // === 保存処理（クラウド保存） ===
+  const handleSave = async () => {
+    setIsSaving(true);
+    setError('');
     const saveData: SaveFile = {
       version: 1,
       savedAt: new Date().toISOString(),
@@ -133,15 +163,45 @@ export default function Home() {
       obstacles,
       textLabels,
     };
-    const blob = new Blob([JSON.stringify(saveData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `booth-layout-${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    
+    try {
+      const res = await fetch('/api/layouts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(saveData),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || '保存に失敗しました');
+      }
+
+      const data = await res.json();
+      
+      // 発行されたIDから共有URLを作成
+      const url = `${window.location.origin}/?id=${data.id}`;
+      setShareUrl(url);
+      
+      // URLを書き換える（リロードなし）
+      window.history.pushState({}, '', url);
+
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'クラウド保存中にエラーが発生しました');
+      
+      // フォールバック: ローカルJSONダウンロード
+      const blob = new Blob([JSON.stringify(saveData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `booth-layout-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // === 読み込み処理 ===
@@ -206,9 +266,10 @@ export default function Home() {
               </button>
               <button
                 onClick={handleSave}
-                className="flex-1 lg:flex-none px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm flex items-center justify-center gap-1"
+                disabled={isSaving}
+                className={`flex-1 lg:flex-none px-3 py-2 rounded transition text-sm flex items-center justify-center gap-1 ${isSaving ? 'bg-blue-400 text-white cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
               >
-                💾 保存
+                {isSaving ? '保存中...' : '🔗 クラウド保存'}
               </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -246,6 +307,42 @@ export default function Home() {
         </div>
         {error && <p className="text-red-500 text-sm px-1">{error}</p>}
       </header>
+
+      {/* 共有URL表示モーダル */}
+      {shareUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md flex flex-col gap-4">
+            <h3 className="text-lg font-bold text-gray-800">🎉 クラウドに保存しました</h3>
+            <p className="text-sm text-gray-600">
+              以下のURLをチームメンバーと共有することで、同じ配置データを開くことができます。
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={shareUrl}
+                className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm bg-gray-50 text-gray-800"
+                onClick={(e) => e.currentTarget.select()}
+              />
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(shareUrl);
+                  alert('クリップボードにコピーしました！');
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-sm font-bold shadow-sm whitespace-nowrap"
+              >
+                コピー
+              </button>
+            </div>
+            <button
+              onClick={() => setShareUrl('')}
+              className="mt-2 text-sm text-gray-500 hover:text-gray-800 underline text-center"
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex-grow w-full h-[60vh] lg:h-[75vh] bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden relative touch-none">
         <CanvasArea
