@@ -49,7 +49,7 @@ export default function CanvasArea({
     // Global Config State
     const [gridUnitMm, setGridUnitMm] = useState(450);
     const [baseTableWidthMm, setBaseTableWidthMm] = useState(1800);
-    const [baseTableDepthMm, setBaseTableDepthMm] = useState(450);
+    const [baseTableDepthMm, setBaseTableDepthMm] = useState(900);
     const [seatFontSize, setSeatFontSize] = useState(14);
 
     // 障害物描画設定
@@ -89,6 +89,11 @@ export default function CanvasArea({
     const multiDragAnchorRef = useRef<{ x: number; y: number } | null>(null);
     // ブースレイヤーへのリフ（ノード直接操作用）
     const boothLayerRef = useRef<any>(null);
+    // ブースリサイズ用 Transformer
+    const boothTrRef = useRef<any>(null);
+    // 中ボタンパン用
+    const isPanningRef = useRef(false);
+    const panStartRef  = useRef<{ x: number; y: number; stagePosX: number; stagePosY: number } | null>(null);
 
     // Background Image State
     const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
@@ -263,6 +268,81 @@ export default function CanvasArea({
         }
     }, [mode]);
 
+    // --- ブースの削除・カラー変更ヘルパー ---
+    const deleteSelectedBooths = () => {
+        if (selectedBoothIds.size === 0 && !selectedBoothId) return;
+        const idsToDelete = selectedBoothIds.size > 0 ? selectedBoothIds : new Set([selectedBoothId!]);
+        onBoothsChange(booths.filter(b => !idsToDelete.has(b.id)));
+        setSelectedBoothId(null);
+        setSelectedBoothIds(new Set());
+    };
+
+    const updateSelectedBoothsColor = (color: string) => {
+        if (selectedBoothIds.size === 0 && !selectedBoothId) return;
+        const idsToUpdate = selectedBoothIds.size > 0 ? selectedBoothIds : new Set([selectedBoothId!]);
+        onBoothsChange(booths.map(b => idsToUpdate.has(b.id) ? { ...b, color } : b));
+    };
+
+    // Keyboard Shortcuts
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // 入力要素にフォーカスがある場合は無視
+            if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+
+            // Escape: 選択解除
+            if (e.key === 'Escape') {
+                setSelectedBoothId(null);
+                setSelectedBoothIds(new Set());
+                setSelectedObstacleId(null);
+                setSelectedTextId(null);
+                return;
+            }
+
+            // Ctrl+A / Cmd+A: 全選択
+            if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+                if (mode === 'booth') {
+                    e.preventDefault();
+                    setSelectedBoothIds(new Set(booths.map(b => b.id)));
+                    setSelectedBoothId(null);
+                }
+                return;
+            }
+
+            // Delete / Backspace: 削除
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (mode === 'booth' && (selectedBoothId || selectedBoothIds.size > 0)) {
+                    deleteSelectedBooths();
+                } else if (mode === 'venue' && selectedObstacleId) {
+                    onObstaclesChange(obstacles.filter(o => o.id !== selectedObstacleId));
+                    setSelectedObstacleId(null);
+                } else if (selectedTextId) {
+                    onTextLabelsChange(textLabels.filter(t => t.id !== selectedTextId));
+                    setSelectedTextId(null);
+                }
+                return;
+            }
+
+            // 矢印キー: 選択ブースを移動（Shiftで5グリッド単位）
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+                if (mode === 'booth' && (selectedBoothId || selectedBoothIds.size > 0)) {
+                    e.preventDefault();
+                    const step = e.shiftKey ? 5 : 1;
+                    const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+                    const dy = e.key === 'ArrowUp'   ? -step : e.key === 'ArrowDown'  ? step : 0;
+                    const ids = selectedBoothIds.size > 0 ? selectedBoothIds : new Set([selectedBoothId!]);
+                    onBoothsChange(booths.map(b =>
+                        ids.has(b.id)
+                            ? { ...b, x: Math.max(0, b.x + dx), y: Math.max(0, b.y + dy) }
+                            : b
+                    ));
+                }
+                return;
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [mode, selectedBoothId, selectedBoothIds, selectedObstacleId, selectedTextId, booths, obstacles, textLabels]);
+
     // --- ブースのグリッド占有矩形を取得（グリッド単位） ---
     const getBoothGridBounds = (booth: Booth) => {
         const widthMm  = booth.sizeMm ? booth.sizeMm.width : booth.size * baseTableWidthMm;
@@ -422,6 +502,19 @@ export default function CanvasArea({
         const stage = e.target.getStage();
         if (!stage) return;
 
+        // 中ボタン（ホイールボタン）: パン開始
+        if (e.evt?.button === 1) {
+            e.evt.preventDefault();
+            isPanningRef.current = true;
+            panStartRef.current = {
+                x: e.evt.clientX,
+                y: e.evt.clientY,
+                stagePosX: stage.x(),
+                stagePosY: stage.y(),
+            };
+            return;
+        }
+
         // 背景クリックで選択解除
         const clickedOnStage = e.target === stage;
         if (clickedOnStage) {
@@ -438,8 +531,10 @@ export default function CanvasArea({
                 }
                 return;
             }
-            // ブースモードでは範囲選択開始
-            if (mode === 'booth') {
+            // ブースモードでは範囲選択開始（マウスのみ・タッチはパン優先）
+            if (mode === 'booth' && !e.evt?.touches) {
+                // Stageのドラッグをキャンセルしてゴムバンド優先
+                stage.stopDrag();
                 setSelectedBoothIds(new Set());
                 const pos = stage.getPointerPosition();
                 if (pos) {
@@ -521,6 +616,22 @@ export default function CanvasArea({
     };
 
     const handleMouseMove = (e: any) => {
+        // 中ボタンパン
+        if (isPanningRef.current && panStartRef.current) {
+            const stage = e.target.getStage();
+            if (!stage) return;
+            const dx = e.evt.clientX - panStartRef.current.x;
+            const dy = e.evt.clientY - panStartRef.current.y;
+            const newPos = {
+                x: panStartRef.current.stagePosX + dx,
+                y: panStartRef.current.stagePosY + dy,
+            };
+            setStagePos(newPos);
+            stage.position(newPos);
+            stage.batchDraw();
+            return;
+        }
+
         if (isBgEditing) return;
         if (isCalibrating) return;
 
@@ -560,6 +671,13 @@ export default function CanvasArea({
     };
 
     const handleMouseUp = () => {
+        // 中ボタンパン終了
+        if (isPanningRef.current) {
+            isPanningRef.current = false;
+            panStartRef.current = null;
+            return;
+        }
+
         if (isCalibrating) return;
 
         // ドラッグ範囲選択の確定
@@ -608,23 +726,45 @@ export default function CanvasArea({
         setPreviewRect(null);
     };
 
-    // ズーム操作
+    // ズーム・パン操作
     const handleWheel = (e: any) => {
         e.evt.preventDefault();
-        const scaleBy = 1.1;
         const stage = e.target.getStage();
-        const oldScale = stage.scaleX();
-        const mousePointTo = {
-            x: stage.getPointerPosition().x / oldScale - stage.x() / oldScale,
-            y: stage.getPointerPosition().y / oldScale - stage.y() / oldScale,
+        const scaleBy = 1.1;
+
+        const doZoom = () => {
+            const oldScale = stage.scaleX();
+            const pointer = stage.getPointerPosition();
+            const mousePointTo = {
+                x: pointer.x / oldScale - stage.x() / oldScale,
+                y: pointer.y / oldScale - stage.y() / oldScale,
+            };
+            const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
+            if (newScale < 0.1 || newScale > 5) return;
+            const newPos = {
+                x: -(mousePointTo.x - pointer.x / newScale) * newScale,
+                y: -(mousePointTo.y - pointer.y / newScale) * newScale,
+            };
+            setStageScale(newScale);
+            setStagePos(newPos);
         };
-        const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
-        if (newScale < 0.1 || newScale > 5) return;
-        setStageScale(newScale);
-        setStagePos({
-            x: -(mousePointTo.x - stage.getPointerPosition().x / newScale) * newScale,
-            y: -(mousePointTo.y - stage.getPointerPosition().y / newScale) * newScale,
-        });
+
+        if (e.evt.ctrlKey) {
+            // Ctrl+スクロール or トラックパッドピンチ → ズーム
+            doZoom();
+        } else if (e.evt.deltaMode === 0 && (Math.abs(e.evt.deltaX) > 0 || Math.abs(e.evt.deltaY) > 0)) {
+            // トラックパッド2本指スクロール (deltaMode=0: pixel単位) → パン
+            const newPos = {
+                x: stagePos.x - e.evt.deltaX,
+                y: stagePos.y - e.evt.deltaY,
+            };
+            setStagePos(newPos);
+            stage.position(newPos);
+            stage.batchDraw();
+        } else {
+            // マウスホイール → ズーム
+            doZoom();
+        }
     };
 
     // --- タッチ操作（ピンチズーム・パン） ---
@@ -852,7 +992,62 @@ export default function CanvasArea({
         onBoothsChange(newBooths);
     };
 
+    // --- Transformer: 選択ブースにアタッチ ---
+    useEffect(() => {
+        if (!boothTrRef.current || !boothLayerRef.current) return;
+        // 単一選択かつブースモードのみリサイズハンドルを表示
+        if (selectedBoothId && selectedBoothIds.size === 1 && mode === 'booth') {
+            const node = boothLayerRef.current.findOne(`#booth-group-${selectedBoothId}`);
+            if (node) {
+                boothTrRef.current.nodes([node]);
+                boothTrRef.current.getLayer()?.batchDraw();
+                return;
+            }
+        }
+        boothTrRef.current.nodes([]);
+        boothTrRef.current.getLayer()?.batchDraw();
+    }, [selectedBoothId, selectedBoothIds, mode]);
+
+    // --- ブースリサイズ完了ハンドラ ---
+    const handleBoothTransformEnd = (e: any) => {
+        if (!selectedBoothId) return;
+        const node = e.target;
+        const booth = booths.find(b => b.id === selectedBoothId);
+        if (!booth || !node) return;
+
+        const scaleX = Math.abs(node.scaleX());
+        const scaleY = Math.abs(node.scaleY());
+
+        // スケールをリセット（サイズ変化は sizeMm に反映）
+        node.scaleX(1);
+        node.scaleY(1);
+
+        const currentWidthMm = booth.sizeMm ? booth.sizeMm.width : booth.size * baseTableWidthMm;
+        const currentDepthMm = booth.sizeMm ? booth.sizeMm.depth : baseTableDepthMm;
+
+        // グリッドにスナップ（最小 1マス）
+        const newWidthMm = Math.max(gridUnitMm, Math.round(currentWidthMm * scaleX / gridUnitMm) * gridUnitMm);
+        const newDepthMm = Math.max(gridUnitMm, Math.round(currentDepthMm * scaleY / gridUnitMm) * gridUnitMm);
+
+        // 位置もグリッドにスナップ（左上から縮小した場合に位置が変わる）
+        const snappedX = Math.max(0, Math.round(node.x() / GRID_SIZE));
+        const snappedY = Math.max(0, Math.round(node.y() / GRID_SIZE));
+        node.x(snappedX * GRID_SIZE);
+        node.y(snappedY * GRID_SIZE);
+
+        onBoothsChange(booths.map(b =>
+            b.id === selectedBoothId
+                ? { ...b, x: snappedX, y: snappedY, sizeMm: { width: newWidthMm, depth: newDepthMm } }
+                : b
+        ));
+    };
+
     const selectedBooth = booths.find(b => b.id === selectedBoothId);
+
+    const handleResetView = () => {
+        setStageScale(1);
+        setStagePos({ x: 0, y: 0 });
+    };
 
     return (
         <div ref={containerRef} className="bg-white flex flex-col h-full w-full relative">
@@ -878,7 +1073,7 @@ export default function CanvasArea({
 
                 {/* Grid & Table Setting (Venue Mode) */}
                 {mode === 'venue' && (
-                     <div className="bg-white shadow-lg rounded-xl px-3 lg:px-4 py-2 border border-gray-200 pointer-events-auto flex flex-wrap justify-center items-center gap-x-4 gap-y-2 w-max max-w-full text-xs">
+                     <div className="bg-white shadow-lg rounded-xl px-3 lg:px-4 py-2 border border-gray-200 pointer-events-auto hidden lg:flex flex-wrap justify-center items-center gap-x-4 gap-y-2 w-max max-w-full text-xs">
                         <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-600 font-medium whitespace-nowrap">1マス:</span>
                             <input
@@ -918,7 +1113,7 @@ export default function CanvasArea({
 
             {/* Booth Edit Panel (When Selected) */}
             {selectedBooth && mode === 'booth' && (
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 lg:top-20 lg:right-4 lg:left-auto lg:translate-x-0 lg:translate-y-0 z-50 bg-white/95 backdrop-blur shadow-2xl lg:shadow-xl rounded-xl p-4 border border-blue-100 w-[90vw] lg:w-64 animate-in fade-in zoom-in-95 lg:slide-in-from-right-4 max-h-[80vh] overflow-y-auto">
+                <div className="absolute bottom-0 left-0 right-0 lg:top-20 lg:bottom-auto lg:right-4 lg:left-auto z-50 bg-white/95 backdrop-blur shadow-2xl lg:shadow-xl rounded-t-2xl lg:rounded-xl p-4 border-t border-blue-100 lg:border lg:w-64 animate-in slide-in-from-bottom lg:slide-in-from-right-4 max-h-[60vh] overflow-y-auto">
                     <div className="flex justify-between items-center mb-2 border-b pb-2">
                         <h3 className="font-bold text-gray-700 truncate">{selectedBooth.name}</h3>
                         <button onClick={() => { setSelectedBoothId(null); setSelectedBoothIds(new Set()); }} className="text-gray-400 hover:text-gray-600">✕</button>
@@ -964,15 +1159,33 @@ export default function CanvasArea({
                         </div>
 
                         {/* 回転ボタン */}
-                        <button
-                            onClick={rotateSelectedBooths}
-                            className="w-full flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg py-1.5 text-sm font-medium transition"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                            </svg>
-                            90度回転{selectedBoothIds.size > 1 ? ` (選択中 ${selectedBoothIds.size}帪)` : ''}
-                        </button>
+                        <div className="flex gap-2">
+                            <input
+                                type="color"
+                                value={selectedBooth.color || categoryColors[selectedBooth.category]?.stroke || '#cccccc'}
+                                onChange={(e) => updateSelectedBoothsColor(e.target.value)}
+                                className="w-10 h-10 rounded border border-gray-200 cursor-pointer p-0.5 shrink-0"
+                                title="カラー変更"
+                            />
+                            <button
+                                onClick={rotateSelectedBooths}
+                                className="flex-1 flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-sm font-medium transition"
+                                title="90度回転"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                                </svg>
+                            </button>
+                            <button
+                                onClick={deleteSelectedBooths}
+                                className="flex-1 flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-sm font-medium transition"
+                                title="削除"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                                </svg>
+                            </button>
+                        </div>
 
                         {selectedBooth.sizeMm && (
                             <button
@@ -995,21 +1208,42 @@ export default function CanvasArea({
 
             {/* 複数選択中のバネル */}
             {selectedBoothIds.size > 1 && mode === 'booth' && (
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 lg:top-20 lg:right-4 lg:left-auto lg:translate-x-0 lg:translate-y-0 z-50 bg-white/95 backdrop-blur shadow-2xl lg:shadow-xl rounded-xl p-4 border border-amber-200 w-[90vw] lg:w-64 animate-in fade-in zoom-in-95 lg:slide-in-from-right-4 max-h-[80vh] overflow-y-auto">
+                <div className="absolute bottom-0 left-0 right-0 lg:top-20 lg:bottom-auto lg:right-4 lg:left-auto z-50 bg-white/95 backdrop-blur shadow-2xl lg:shadow-xl rounded-t-2xl lg:rounded-xl p-4 border-t border-amber-200 lg:border lg:w-64 animate-in slide-in-from-bottom lg:slide-in-from-right-4 max-h-[60vh] overflow-y-auto">
                     <div className="flex justify-between items-center mb-3">
                         <span className="font-bold text-amber-700">{selectedBoothIds.size}帪選択中</span>
                         <button onClick={() => { setSelectedBoothIds(new Set()); setSelectedBoothId(null); }} className="text-gray-400 hover:text-gray-600">✕</button>
                     </div>
-                    <button
-                        onClick={rotateSelectedBooths}
-                        className="w-full flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg py-2 text-sm font-medium transition"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                        </svg>
-                        まとめて 90度回転
-                    </button>
-                    <p className="text-xs text-gray-400 mt-2 text-center">ドラッグでまとめて移動できます</p>
+                    <div className="flex flex-col gap-2">
+                        <button
+                            onClick={rotateSelectedBooths}
+                            className="w-full flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg py-2 text-sm font-medium transition"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                            </svg>
+                            まとめて 90度回転
+                        </button>
+                        
+                        <div className="flex gap-2">
+                            <input
+                                type="color"
+                                value={'#cccccc'}
+                                onChange={(e) => updateSelectedBoothsColor(e.target.value)}
+                                className="w-10 h-10 rounded border border-gray-200 cursor-pointer p-0.5 shrink-0"
+                                title="一括カラー変更"
+                            />
+                            <button
+                                onClick={deleteSelectedBooths}
+                                className="flex-1 flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-sm font-medium transition"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                                </svg>
+                                まとめて削除
+                            </button>
+                        </div>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-2 text-center">ドラッグで移動 / ↑↓←→ キーで精密移動</p>
                 </div>
             )}
 
@@ -1081,7 +1315,7 @@ export default function CanvasArea({
                                     );
                                 })}
                             </div>
-                            <p className="text-[10px] text-gray-400 leading-tight">PC: Shift+クリック or 空白ドラッグで範囲選択</p>
+                            <p className="text-[10px] text-gray-400 leading-tight">範囲ドラッグ / Shift+クリック: 複数選択<br/>矢印キー: 移動 / Shift+矢印: 5グリッド移動<br/>Ctrl+A: 全選択 / Esc: 解除<br/>中ボタンドラッグ / 2本指スクロール: パン<br/>選択後 ハンドルをドラッグ: リサイズ</p>
                         </div>
                     )}
                 </div>
@@ -1089,9 +1323,9 @@ export default function CanvasArea({
 
             {/* Venue Editing Toolbar */}
             {mode === 'venue' && (
-                <div className="absolute top-32 lg:top-20 left-2 lg:left-4 z-10 bg-white/95 backdrop-blur shadow-xl rounded-xl p-2 flex flex-col gap-2 border border-orange-100 animate-in slide-in-from-left-4 items-start w-max max-w-[calc(100vw-16px)] sm:max-w-[400px]">
+                <div className="absolute top-24 lg:top-20 left-2 lg:left-4 z-10 bg-white/95 backdrop-blur shadow-xl rounded-xl p-2 flex flex-col gap-2 border border-orange-100 animate-in slide-in-from-left-4 items-start max-w-[calc(100vw-16px)]">
 
-                    <div className="flex flex-wrap gap-1 sm:gap-2 w-full">
+                    <div className="flex gap-1 sm:gap-2 overflow-x-auto w-full pb-0.5 scrollbar-none">
                         <button
                             onClick={() => setActiveTool('none')}
                             className={`flex flex-col items-center p-2 rounded w-16 transition-colors ${activeTool === 'none' && !isBgEditing ? 'bg-gray-200 ring-2 ring-gray-300' : 'hover:bg-gray-100'}`}
@@ -1337,7 +1571,7 @@ export default function CanvasArea({
 
             {/* AI解析パネル - Bottom Right */}
             {mode === 'venue' && (
-                <div className="absolute bottom-4 right-4 z-10 bg-white rounded-2xl shadow-lg border border-blue-100 overflow-hidden min-w-[200px]">
+                <div className="absolute bottom-4 right-2 lg:right-4 z-10 bg-white rounded-2xl shadow-lg border border-blue-100 overflow-hidden min-w-[120px] lg:min-w-[200px]">
                     {/* プロバイダー選択タブ */}
                     <div className="flex border-b border-gray-100">
                         <button
@@ -1404,34 +1638,45 @@ export default function CanvasArea({
                 </div>
             )}
 
-            {/* エクスポートボタン群 */}
-            <div className="absolute bottom-4 left-4 z-10 flex flex-col gap-2">
+            {/* エクスポートボタン群 + ビューリセット */}
+            <div className="absolute bottom-4 left-2 lg:left-4 z-10 flex flex-col gap-2">
+                {/* ビューリセット */}
+                <button
+                    onClick={handleResetView}
+                    className="flex items-center gap-1 bg-white/90 hover:bg-gray-100 border border-gray-300 text-gray-700 px-2 py-2 rounded-xl shadow text-xs font-medium transition"
+                    title="表示位置・ズームをリセット"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 shrink-0">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9 3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5 5.25 5.25" />
+                    </svg>
+                    <span className="hidden sm:inline">表示リセット</span>
+                </button>
                 <button
                     onClick={handleExport}
-                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl shadow-lg text-sm font-semibold transition"
+                    className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-2 rounded-xl shadow-lg text-xs font-semibold transition"
                     title="高画質 PNG でダウンロード（印刷用）"
                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 shrink-0">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                     </svg>
-                    高画質画像(PNG)保存
+                    <span className="hidden sm:inline">PNG保存</span>
                 </button>
                 <button
                     onClick={handleExportSVG}
-                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl shadow-lg text-sm font-semibold transition"
+                    className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-2 rounded-xl shadow-lg text-xs font-semibold transition"
                     title="ベクターデータ (SVG) でダウンロード"
                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 shrink-0">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
                     </svg>
-                    ベクター(SVG)保存
+                    <span className="hidden sm:inline">SVG保存</span>
                 </button>
             </div>
 
 
             {/* Instruction Toast */}
             {mode === 'venue' && (
-                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-full text-sm pointer-events-none animate-pulse z-20 whitespace-nowrap">
+                <div className="absolute bottom-20 sm:bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-3 py-1.5 rounded-full text-xs sm:text-sm pointer-events-none animate-pulse z-20 whitespace-nowrap">
                     {isCalibrating
                         ? (calibrationPoints.length === 0 ? '画像上の始点をクリックしてください' : '画像上の終点をクリックしてください')
                         : isBgEditing
@@ -1443,17 +1688,12 @@ export default function CanvasArea({
             )}
 
             {/* Canvas */}
-            <div className="flex-grow overflow-hidden" style={{ cursor: mode === 'venue' && activeTool !== 'none' ? 'crosshair' : 'grab' }}>
+            <div className="flex-grow overflow-hidden" style={{ cursor: mode === 'venue' && activeTool !== 'none' ? 'crosshair' : mode === 'venue' ? 'grab' : 'default' }}>
                 <Stage
                     ref={stageRef}
                     width={dimensions.width}
                     height={dimensions.height}
-                    draggable={
-                        !isBgEditing &&
-                        (mode === 'venue'
-                            ? activeTool === 'none'
-                            : false)
-                    }
+                    draggable={!isBgEditing && activeTool === 'none' && mode === 'venue'}
                     onWheel={handleWheel}
                     scaleX={stageScale}
                     scaleY={stageScale}
@@ -1565,8 +1805,31 @@ export default function CanvasArea({
                                 onDragStart={(e) => handleDragStartBooth(e, booth.id)}
                                 onDragMove={(e) => handleDragMoveBooth(e, booth.id)}
                                 onDragEnd={(e) => handleDragEndBooth(e, booth.id)}
+                                onTransformEnd={selectedBoothId === booth.id ? handleBoothTransformEnd : undefined}
                             />
                         ))}
+                        {/* リサイズ用 Transformer（単一選択時のみ表示） */}
+                        <Transformer
+                            ref={boothTrRef}
+                            rotateEnabled={false}
+                            keepRatio={false}
+                            anchorSize={12}
+                            anchorCornerRadius={4}
+                            borderStroke="#f59e0b"
+                            borderStrokeWidth={2}
+                            anchorStroke="#d97706"
+                            anchorFill="#fef3c7"
+                            anchorStyleFunc={(anchor) => {
+                                // 中央ハンドルは非表示（角と辺のみ）
+                                if (anchor.hasName('rotater')) anchor.visible(false);
+                            }}
+                            boundBoxFunc={(oldBox, newBox) => {
+                                // 最小サイズ: 1グリッド
+                                if (Math.abs(newBox.width) < GRID_SIZE) return oldBox;
+                                if (Math.abs(newBox.height) < GRID_SIZE) return oldBox;
+                                return newBox;
+                            }}
+                        />
                     </Layer>
 
                     {/* テキストラベルレイヤー（最上位） */}

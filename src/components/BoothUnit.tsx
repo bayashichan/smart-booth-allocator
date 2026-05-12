@@ -15,8 +15,9 @@ interface BoothUnitProps {
     categoryColors?: Record<string, { stroke: string; fill: string }>;
     onDragStart?: (e: any) => void;
     onDragMove?:  (e: any) => void;
-    onDragEnd?:   (e: any) => void;
-    onClick?:     (e: any) => void;
+    onDragEnd?:      (e: any) => void;
+    onClick?:        (e: any) => void;
+    onTransformEnd?: (e: any) => void;
     draggable?: boolean;
 }
 
@@ -42,6 +43,7 @@ export default function BoothUnit({
     onDragMove,
     onDragEnd,
     onClick,
+    onTransformEnd,
     draggable = true,
 }: BoothUnitProps) {
     const mmToPx = (mm: number) => (mm / gridUnitMm) * gridPixelSize;
@@ -51,7 +53,10 @@ export default function BoothUnit({
     const widthPx  = mmToPx(widthMm);
     const heightPx = mmToPx(depthMm);
 
-    const colors = categoryColors[data.category] ?? DEFAULT_CATEGORY_COLORS[data.category] ?? DEFAULT_CATEGORY_COLORS['その他'];
+    const baseColors = categoryColors[data.category] ?? DEFAULT_CATEGORY_COLORS[data.category] ?? DEFAULT_CATEGORY_COLORS['その他'];
+    const colors = data.color 
+        ? { stroke: data.color, fill: data.color + '22' } 
+        : baseColors;
     const displayText = data.seatNumber ? data.seatNumber : data.name;
 
     const rot = data.rotation ?? 0;
@@ -70,6 +75,7 @@ export default function BoothUnit({
             onDragEnd={onDragEnd}
             onClick={onClick}
             onTap={onClick}
+            onTransformEnd={onTransformEnd}
         >
             <Rect
                 x={0}
