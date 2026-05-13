@@ -14,7 +14,10 @@ export interface Booth {
     power?: boolean;
   };
   sizeMm?: { width: number; depth: number }; // 任意のサイズ (mm)
-  color?: string; // 個別のカラー設定
+  color?: string;        // 後方互換用（旧データ）
+  strokeColor?: string;  // 枠線色
+  fillColor?: string;    // 塗りつぶし色
+  textColor?: string;    // 文字色
   // 配置情報
   x: number; // グリッド座標 X
   y: number; // グリッド座標 Y

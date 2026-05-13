@@ -54,9 +54,11 @@ export default function BoothUnit({
     const heightPx = mmToPx(depthMm);
 
     const baseColors = categoryColors[data.category] ?? DEFAULT_CATEGORY_COLORS[data.category] ?? DEFAULT_CATEGORY_COLORS['その他'];
-    const colors = data.color 
-        ? { stroke: data.color, fill: data.color + '22' } 
-        : baseColors;
+    const colors = {
+        stroke: data.strokeColor ?? data.color ?? baseColors.stroke,
+        fill:   data.fillColor   ?? (data.color ? data.color + '22' : baseColors.fill),
+        text:   data.textColor   ?? data.strokeColor ?? data.color ?? baseColors.stroke,
+    };
     const displayText = data.seatNumber ? data.seatNumber : data.name;
 
     const rot = data.rotation ?? 0;
@@ -100,7 +102,7 @@ export default function BoothUnit({
                 fontStyle="bold"
                 align="center"
                 verticalAlign="middle"
-                fill={colors.stroke}
+                fill={colors.text}
                 wrap="word"
                 listening={false}
             />

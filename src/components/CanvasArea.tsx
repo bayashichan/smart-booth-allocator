@@ -160,7 +160,10 @@ export default function CanvasArea({
             const depthMm = b.sizeMm ? b.sizeMm.depth : baseTableDepthMm;
             const w = (widthMm / gridUnitMm) * GRID_SIZE;
             const h = (depthMm / gridUnitMm) * GRID_SIZE;
-            const colors = categoryColors[b.category] || DEFAULT_CATEGORY_COLORS[b.category] || DEFAULT_CATEGORY_COLORS['その他'];
+            const baseColors = categoryColors[b.category] || DEFAULT_CATEGORY_COLORS[b.category] || DEFAULT_CATEGORY_COLORS['その他'];
+            const strokeColor = b.strokeColor ?? b.color ?? baseColors.stroke;
+            const fillColor   = b.fillColor   ?? (b.color ? b.color + '22' : baseColors.fill);
+            const textColor   = b.textColor   ?? b.strokeColor ?? b.color ?? baseColors.stroke;
             const rot = b.rotation || 0;
             const text = b.seatNumber || b.name;
 
@@ -168,8 +171,8 @@ export default function CanvasArea({
             const cy = h / 2;
 
             return `<g transform="translate(${b.x * GRID_SIZE}, ${b.y * GRID_SIZE}) rotate(${rot})">
-                <rect width="${w}" height="${h}" fill="${colors.fill}" stroke="${colors.stroke}" stroke-width="2" rx="2" />
-                <text x="${cx}" y="${cy}" font-family="sans-serif" font-size="${seatFontSize}px" font-weight="bold" fill="${colors.stroke}" text-anchor="middle" dominant-baseline="central" transform="rotate(${-rot}, ${cx}, ${cy})">${text}</text>
+                <rect width="${w}" height="${h}" fill="${fillColor}" stroke="${strokeColor}" stroke-width="2" rx="2" />
+                <text x="${cx}" y="${cy}" font-family="sans-serif" font-size="${seatFontSize}px" font-weight="bold" fill="${textColor}" text-anchor="middle" dominant-baseline="central" transform="rotate(${-rot}, ${cx}, ${cy})">${text}</text>
             </g>`;
         }).join('\n');
 
@@ -277,10 +280,24 @@ export default function CanvasArea({
         setSelectedBoothIds(new Set());
     };
 
-    const updateSelectedBoothsColor = (color: string) => {
+    const updateSelectedBoothsColor = (color: string, target: 'stroke' | 'fill' | 'text') => {
         if (selectedBoothIds.size === 0 && !selectedBoothId) return;
         const idsToUpdate = selectedBoothIds.size > 0 ? selectedBoothIds : new Set([selectedBoothId!]);
-        onBoothsChange(booths.map(b => idsToUpdate.has(b.id) ? { ...b, color } : b));
+        onBoothsChange(booths.map(b => {
+            if (!idsToUpdate.has(b.id)) return b;
+            if (target === 'stroke') return { ...b, strokeColor: color };
+            if (target === 'fill')   return { ...b, fillColor: color };
+            return { ...b, textColor: color };
+        }));
+    };
+
+    const resetBoothColor = (boothId: string, target: 'stroke' | 'fill' | 'text') => {
+        onBoothsChange(booths.map(b => {
+            if (b.id !== boothId) return b;
+            if (target === 'stroke') { const { strokeColor, ...rest } = b; return rest; }
+            if (target === 'fill')   { const { fillColor,   ...rest } = b; return rest; }
+            const { textColor, ...rest } = b; return rest;
+        }));
     };
 
     // Keyboard Shortcuts
@@ -1152,11 +1169,11 @@ export default function CanvasArea({
                                     const newBooths = booths.map(b => {
                                         if (b.id === selectedBooth.id) {
                                             // この座席に target の出展者情報を上書き（位置は維持）
-                                            return { ...b, name: target.name, category: target.category, seatNumber: target.seatNumber, preferences: target.preferences, color: target.color };
+                                            return { ...b, name: target.name, category: target.category, seatNumber: target.seatNumber, preferences: target.preferences, color: target.color, strokeColor: target.strokeColor, fillColor: target.fillColor, textColor: target.textColor };
                                         }
                                         if (b.id === targetId) {
                                             // target の booth レコードに元の出展者情報を移し、未配置にする
-                                            return { ...b, name: selectedBooth.name, category: selectedBooth.category, seatNumber: selectedBooth.seatNumber, preferences: selectedBooth.preferences, color: selectedBooth.color, isPlaced: false };
+                                            return { ...b, name: selectedBooth.name, category: selectedBooth.category, seatNumber: selectedBooth.seatNumber, preferences: selectedBooth.preferences, color: selectedBooth.color, strokeColor: selectedBooth.strokeColor, fillColor: selectedBooth.fillColor, textColor: selectedBooth.textColor, isPlaced: false };
                                         }
                                         return b;
                                     });
@@ -1205,15 +1222,33 @@ export default function CanvasArea({
                             </div>
                         </div>
 
+                        {/* 色設定 */}
+                        <div className="space-y-1">
+                            {([
+                                { label: '枠線色', target: 'stroke' as const, value: selectedBooth.strokeColor ?? selectedBooth.color ?? categoryColors[selectedBooth.category]?.stroke ?? '#cccccc' },
+                                { label: '塗り色', target: 'fill'   as const, value: selectedBooth.fillColor   ?? (selectedBooth.color ? selectedBooth.color : categoryColors[selectedBooth.category]?.fill ?? '#ffffff') },
+                                { label: '文字色', target: 'text'   as const, value: selectedBooth.textColor   ?? selectedBooth.strokeColor ?? selectedBooth.color ?? categoryColors[selectedBooth.category]?.stroke ?? '#333333' },
+                            ] as { label: string; target: 'stroke' | 'fill' | 'text'; value: string }[]).map(({ label, target, value }) => (
+                                <div key={target} className="flex items-center gap-2">
+                                    <label className="text-xs text-gray-700 w-10 shrink-0">{label}</label>
+                                    <input
+                                        type="color"
+                                        value={value}
+                                        onChange={(e) => updateSelectedBoothsColor(e.target.value, target)}
+                                        className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0.5 shrink-0"
+                                        title={label}
+                                    />
+                                    <button
+                                        onClick={() => resetBoothColor(selectedBooth.id, target)}
+                                        className="text-xs text-gray-400 hover:text-gray-600"
+                                        title="リセット"
+                                    >↩</button>
+                                </div>
+                            ))}
+                        </div>
+
                         {/* 回転ボタン */}
                         <div className="flex gap-2">
-                            <input
-                                type="color"
-                                value={selectedBooth.color || categoryColors[selectedBooth.category]?.stroke || '#cccccc'}
-                                onChange={(e) => updateSelectedBoothsColor(e.target.value)}
-                                className="w-10 h-10 rounded border border-gray-200 cursor-pointer p-0.5 shrink-0"
-                                title="カラー変更"
-                            />
                             <button
                                 onClick={rotateSelectedBooths}
                                 className="flex-1 flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-sm font-medium transition"
@@ -1272,13 +1307,11 @@ export default function CanvasArea({
                         </button>
                         
                         <div className="flex gap-2">
-                            <input
-                                type="color"
-                                value={'#cccccc'}
-                                onChange={(e) => updateSelectedBoothsColor(e.target.value)}
-                                className="w-10 h-10 rounded border border-gray-200 cursor-pointer p-0.5 shrink-0"
-                                title="一括カラー変更"
-                            />
+                            <div className="flex flex-col gap-1">
+                                <input type="color" defaultValue="#cccccc" onChange={(e) => updateSelectedBoothsColor(e.target.value, 'stroke')} className="w-8 h-8 rounded border-2 border-gray-400 cursor-pointer p-0.5 shrink-0" title="一括 枠線色" />
+                                <input type="color" defaultValue="#ffffff" onChange={(e) => updateSelectedBoothsColor(e.target.value, 'fill')}   className="w-8 h-8 rounded border border-gray-200 cursor-pointer p-0.5 shrink-0" title="一括 塗り色" />
+                                <input type="color" defaultValue="#333333" onChange={(e) => updateSelectedBoothsColor(e.target.value, 'text')}   className="w-8 h-8 rounded border border-gray-200 cursor-pointer p-0.5 shrink-0" title="一括 文字色" />
+                            </div>
                             <button
                                 onClick={deleteSelectedBooths}
                                 className="flex-1 flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-sm font-medium transition"
