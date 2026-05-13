@@ -1120,10 +1120,57 @@ export default function CanvasArea({
                     </div>
 
                     <div className="space-y-3">
-                        {/* 座席番号 */}
-                        {selectedBooth.seatNumber && (
-                            <div className="text-sm font-medium text-purple-700">#{selectedBooth.seatNumber}</div>
-                        )}
+                        {/* 座席番号（編集可能） */}
+                        <div>
+                            <label className="text-xs text-gray-500 block mb-1">座席番号</label>
+                            <input
+                                type="text"
+                                value={selectedBooth.seatNumber || ''}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    const newBooths = booths.map(b =>
+                                        b.id === selectedBooth.id ? { ...b, seatNumber: val || undefined } : b
+                                    );
+                                    onBoothsChange(newBooths);
+                                }}
+                                placeholder="例: A-01"
+                                className="w-full border rounded px-2 py-1 text-sm"
+                            />
+                        </div>
+
+                        {/* 出展者を変更 */}
+                        <div>
+                            <label className="text-xs text-gray-500 block mb-1">出展者を変更</label>
+                            <select
+                                value={selectedBooth.id}
+                                onChange={(e) => {
+                                    const targetId = e.target.value;
+                                    if (targetId === selectedBooth.id) return;
+                                    const target = booths.find(b => b.id === targetId);
+                                    if (!target) return;
+                                    // この座席に新しい出展者を割り当て、元の出展者は未配置として残す
+                                    const newBooths = booths.map(b => {
+                                        if (b.id === selectedBooth.id) {
+                                            // この座席に target の出展者情報を上書き（位置は維持）
+                                            return { ...b, name: target.name, category: target.category, seatNumber: target.seatNumber, preferences: target.preferences, color: target.color };
+                                        }
+                                        if (b.id === targetId) {
+                                            // target の booth レコードに元の出展者情報を移し、未配置にする
+                                            return { ...b, name: selectedBooth.name, category: selectedBooth.category, seatNumber: selectedBooth.seatNumber, preferences: selectedBooth.preferences, color: selectedBooth.color, isPlaced: false };
+                                        }
+                                        return b;
+                                    });
+                                    onBoothsChange(newBooths);
+                                }}
+                                className="w-full border rounded px-2 py-1 text-sm"
+                            >
+                                {booths.map(b => (
+                                    <option key={b.id} value={b.id}>
+                                        {b.seatNumber ? `#${b.seatNumber} ` : ''}{b.name}{!b.isPlaced ? ' (未配置)' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
 
                         <div>
                             <label className="text-xs text-gray-500 block mb-1">現在のサイズ</label>
