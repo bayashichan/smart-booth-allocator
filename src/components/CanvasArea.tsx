@@ -1096,7 +1096,7 @@ export default function CanvasArea({
                                 step={10}
                                 title="幅"
                             />
-                            <span className="text-gray-500">x</span>
+                            <span className="text-gray-800">x</span>
                             <input
                                 type="number"
                                 value={baseTableDepthMm}
@@ -1115,14 +1115,14 @@ export default function CanvasArea({
             {selectedBooth && mode === 'booth' && (
                 <div className="absolute bottom-0 left-0 right-0 lg:top-20 lg:bottom-auto lg:right-4 lg:left-auto z-50 bg-white/95 backdrop-blur shadow-2xl lg:shadow-xl rounded-t-2xl lg:rounded-xl p-4 border-t border-blue-100 lg:border lg:w-64 animate-in slide-in-from-bottom lg:slide-in-from-right-4 max-h-[60vh] overflow-y-auto">
                     <div className="flex justify-between items-center mb-2 border-b pb-2">
-                        <h3 className="font-bold text-gray-700 truncate">{selectedBooth.name}</h3>
+                        <h3 className="font-bold text-gray-900 truncate">{selectedBooth.name}</h3>
                         <button onClick={() => { setSelectedBoothId(null); setSelectedBoothIds(new Set()); }} className="text-gray-400 hover:text-gray-600">✕</button>
                     </div>
 
                     <div className="space-y-3">
                         {/* 座席番号（編集可能） */}
                         <div>
-                            <label className="text-xs text-gray-500 block mb-1">座席番号</label>
+                            <label className="text-xs text-gray-800 block mb-1">座席番号</label>
                             <input
                                 type="text"
                                 value={selectedBooth.seatNumber || ''}
@@ -1140,7 +1140,7 @@ export default function CanvasArea({
 
                         {/* 出展者を変更 */}
                         <div>
-                            <label className="text-xs text-gray-500 block mb-1">出展者を変更</label>
+                            <label className="text-xs text-gray-800 block mb-1">出展者を変更</label>
                             <select
                                 value={selectedBooth.id}
                                 onChange={(e) => {
@@ -1173,8 +1173,8 @@ export default function CanvasArea({
                         </div>
 
                         <div>
-                            <label className="text-xs text-gray-500 block mb-1">現在のサイズ</label>
-                            <div className="text-sm font-medium">
+                            <label className="text-xs text-gray-800 block mb-1">現在のサイズ</label>
+                            <div className="text-sm font-medium text-gray-900">
                                 {selectedBooth.sizeMm
                                     ? `${selectedBooth.sizeMm.width}mm x ${selectedBooth.sizeMm.depth}mm`
                                     : `${selectedBooth.size}師 (${selectedBooth.size * baseTableWidthMm}x${baseTableDepthMm}mm)`
@@ -1184,22 +1184,22 @@ export default function CanvasArea({
 
                         <div className="grid grid-cols-2 gap-2">
                             <div>
-                                <label className="text-xs text-gray-500 block mb-1">幅 (mm)</label>
+                                <label className="text-xs text-gray-800 block mb-1">幅 (mm)</label>
                                 <input
                                     type="number"
                                     value={selectedBooth.sizeMm?.width ?? (selectedBooth.size * baseTableWidthMm)}
                                     onChange={(e) => updateBoothSize(selectedBooth.id, Number(e.target.value), selectedBooth.sizeMm?.depth ?? baseTableDepthMm)}
-                                    className={`w-full border rounded px-2 py-1 text-sm ${selectedBooth.sizeMm ? 'bg-white border-blue-300' : 'bg-gray-50'}`}
+                                    className={`w-full border rounded px-2 py-1 text-sm text-gray-900 ${selectedBooth.sizeMm ? 'bg-white border-blue-300' : 'bg-gray-50'}`}
                                     step={10}
                                 />
                             </div>
                             <div>
-                                <label className="text-xs text-gray-500 block mb-1">奥行 (mm)</label>
+                                <label className="text-xs text-gray-800 block mb-1">奥行 (mm)</label>
                                 <input
                                     type="number"
                                     value={selectedBooth.sizeMm?.depth ?? baseTableDepthMm}
                                     onChange={(e) => updateBoothSize(selectedBooth.id, selectedBooth.sizeMm?.width ?? (selectedBooth.size * baseTableWidthMm), Number(e.target.value))}
-                                    className={`w-full border rounded px-2 py-1 text-sm ${selectedBooth.sizeMm ? 'bg-white border-blue-300' : 'bg-gray-50'}`}
+                                    className={`w-full border rounded px-2 py-1 text-sm text-gray-900 ${selectedBooth.sizeMm ? 'bg-white border-blue-300' : 'bg-gray-50'}`}
                                     step={10}
                                 />
                             </div>
@@ -1246,7 +1246,7 @@ export default function CanvasArea({
                             </button>
                         )}
 
-                        <div className="text-xs text-gray-400 mt-2">
+                        <div className="text-xs text-gray-600 mt-2">
                             ※基本サイズ: 1.0師={baseTableWidthMm}mm幅 / 奥行{baseTableDepthMm}mm
                         </div>
                     </div>
