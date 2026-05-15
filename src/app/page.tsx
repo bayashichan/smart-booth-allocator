@@ -20,7 +20,9 @@ async function encodeLayout(data: SaveFile): Promise<string> {
 }
 
 async function decodeLayout(encoded: string): Promise<SaveFile> {
-  const binary = atob(encoded);
+  // URLSearchParams は + をスペースにデコードするため、元の + に戻す
+  const fixed = encoded.replace(/ /g, '+');
+  const binary = atob(fixed);
   const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
   if (typeof DecompressionStream !== 'undefined' && bytes[0] === 0x1f && bytes[1] === 0x8b) {
     const stream = new DecompressionStream('gzip');
@@ -30,7 +32,7 @@ async function decodeLayout(encoded: string): Promise<SaveFile> {
     const buf = await new Response(stream.readable).arrayBuffer();
     return JSON.parse(new TextDecoder().decode(buf));
   }
-  return JSON.parse(decodeURIComponent(atob(encoded)));
+  return JSON.parse(decodeURIComponent(atob(fixed)));
 }
 
 const CanvasArea = dynamic(() => import('@/components/CanvasArea'), {
@@ -287,9 +289,9 @@ export default function Home() {
     };
     try {
       const encoded = await encodeLayout(saveData);
-      const url = `${window.location.origin}/?data=${encoded}`;
+      const url = `${window.location.origin}/?data=${encodeURIComponent(encoded)}`;
       setShareUrl(url);
-      window.history.pushState({}, '', `/?data=${encoded}`);
+      window.history.pushState({}, '', `/?data=${encodeURIComponent(encoded)}`);
     } catch (err: any) {
       setError(err.message || 'クラウド保存中にエラーが発生しました');
     } finally {
