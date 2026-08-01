@@ -11,7 +11,14 @@ import {
   CategoryColorMap,
   DEFAULT_DIMENSIONS,
 } from '@/types/layout';
-import { fetchAndParseSheet } from '@/utils/csvParser';
+import {
+  fetchSheet,
+  guessMapping,
+  buildBooths,
+  MAPPING_FIELDS,
+  type ColumnMapping,
+  type SheetData,
+} from '@/utils/csvParser';
 import { autoLayout } from '@/utils/layoutAlgorithm';
 
 /** 大きな配列でも落ちないよう分割して base64 化する */
@@ -100,6 +107,10 @@ export default function Home() {
   const [loadInput, setLoadInput] = useState('');
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [savedAt, setSavedAt] = useState<string>('');
+
+  // スプレッドシート取り込み（列の対応づけダイアログ用）
+  const [sheetData, setSheetData] = useState<SheetData | null>(null);
+  const [mapping, setMapping]     = useState<ColumnMapping | null>(null);
 
   // ─── Undo / Redo ─────────────────────────────────────────────────────────
   const historyRef = useRef<Snapshot[]>([]);
@@ -340,23 +351,39 @@ export default function Home() {
     }
   };
 
-  // ─── CSV 読み込み ─────────────────────────────────────────────────────────
-  const handleLoadData = async () => {
+  // ─── スプレッドシート読み込み（取得 → 列の対応づけ → 取り込み） ───────────
+  const handleFetchSheet = async () => {
     if (!csvUrl) return;
     setLoading(true);
     setError('');
     try {
-      const data = await fetchAndParseSheet(csvUrl);
-      snapshot();
-      // 位置は決めず、すべて「未配置」としてトレイに入れる。
-      // 並べるのは「自動配置」かトレイからのタップで行う。
-      setBooths(data.map(b => ({ ...b, isPlaced: false })));
-      setNotice(`${data.length}件を読み込みました。「自動配置」か未配置トレイから配置してください。`);
-    } catch {
-      setError('データの読み込みに失敗しました。URLと公開設定を確認してください。');
+      const data = await fetchSheet(csvUrl);
+      setSheetData(data);
+      setMapping(guessMapping(data.headers));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'スプレッドシートの読み込みに失敗しました');
     } finally {
       setLoading(false);
     }
+  };
+
+  const importPreview = sheetData && mapping ? buildBooths(sheetData.rows, mapping) : [];
+
+  const handleImportSheet = () => {
+    if (!sheetData || !mapping) return;
+    const imported = buildBooths(sheetData.rows, mapping);
+    if (imported.length === 0) {
+      setError('取り込める行がありませんでした。「出展者名」か「座席番号」の列を指定してください。');
+      return;
+    }
+    snapshot();
+    // 位置は決めず、すべて「未配置」としてトレイに入れる。
+    // 並べるのは「自動配置」かトレイからのタップで行う。
+    setBooths(imported);
+    setSheetData(null);
+    setMapping(null);
+    setIsPanelOpen(false);
+    setNotice(`${imported.length}件を読み込みました。「自動配置」か未配置トレイから配置してください。`);
   };
 
   // ─── 自動配置 ─────────────────────────────────────────────────────────────
@@ -565,16 +592,23 @@ export default function Home() {
               </label>
             </div>
 
-            {/* CSV 読み込み */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 border-t border-gray-200 pt-3">
-              <span className="text-xs text-gray-600 font-semibold w-20 shrink-0">CSV読込</span>
-              <input type="text" placeholder="Google Sheets の CSV URL"
-                className="flex-1 min-w-0 border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 bg-white"
-                value={csvUrl} onChange={(e) => setCsvUrl(e.target.value)} />
-              <button onClick={handleLoadData} disabled={loading || !csvUrl}
-                className="h-10 px-4 bg-green-600 text-white rounded active:bg-green-700 disabled:bg-gray-300 text-sm font-bold shrink-0">
-                {loading ? '読込中...' : 'ロード'}
-              </button>
+            {/* スプレッドシート読み込み */}
+            <div className="border-t border-gray-200 pt-3">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <span className="text-xs text-gray-600 font-semibold w-20 shrink-0">シート読込</span>
+                <input type="text" placeholder="スプレッドシートのURLを貼り付け"
+                  className="flex-1 min-w-0 border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 bg-white"
+                  value={csvUrl} onChange={(e) => setCsvUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleFetchSheet(); }} />
+                <button onClick={handleFetchSheet} disabled={loading || !csvUrl}
+                  className="h-10 px-4 bg-green-600 text-white rounded active:bg-green-700 disabled:bg-gray-300 text-sm font-bold shrink-0">
+                  {loading ? '読込中...' : '読み込む'}
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1 sm:pl-[5.5rem]">
+                通常の共有URL（<code className="bg-gray-100 px-1 rounded">/edit#gid=0</code>）をそのまま貼れます。
+                共有設定は「リンクを知っている全員が閲覧可」にしてください。
+              </p>
             </div>
 
             {/* 保存済みレイアウト読み込み */}
@@ -606,6 +640,93 @@ export default function Home() {
           </p>
         )}
       </header>
+
+      {/* ── 列の対応づけダイアログ ──────────────────────────────────── */}
+      {sheetData && mapping && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 sm:p-4">
+          <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-xl shadow-2xl flex flex-col max-h-[92dvh]">
+            <div className="px-4 py-3 border-b border-gray-200 shrink-0">
+              <h3 className="text-base font-bold text-gray-800">列の対応づけ</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {sheetData.rows.length}行 / {sheetData.headers.length}列を検出しました。
+                どの列を使うか確認してください。
+              </p>
+            </div>
+
+            <div className="px-4 py-3 overflow-y-auto space-y-2.5">
+              {MAPPING_FIELDS.map(({ key, label, hint }) => (
+                <div key={key} className="flex items-center gap-2">
+                  <div className="w-24 shrink-0">
+                    <span className="text-xs font-medium text-gray-700 block">{label}</span>
+                    <span className="text-[10px] text-gray-400 block leading-tight">{hint}</span>
+                  </div>
+                  <select
+                    value={mapping[key]}
+                    onChange={(e) => setMapping({ ...mapping, [key]: e.target.value })}
+                    className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-2 text-sm text-gray-900 bg-white"
+                  >
+                    <option value="">— 使わない —</option>
+                    {sheetData.headers.map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                </div>
+              ))}
+
+              {/* プレビュー */}
+              <div className="border-t border-gray-200 pt-2.5">
+                <p className="text-xs font-semibold text-gray-600 mb-1">
+                  取り込みプレビュー（{importPreview.length}件）
+                </p>
+                {importPreview.length === 0 ? (
+                  <p className="text-xs text-red-600">
+                    取り込める行がありません。「出展者名」か「座席番号」の列を指定してください。
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto border border-gray-200 rounded">
+                    <table className="text-[11px] w-full">
+                      <thead className="bg-gray-50 text-gray-500">
+                        <tr>
+                          <th className="px-2 py-1 text-left font-medium">座席</th>
+                          <th className="px-2 py-1 text-left font-medium">出展者</th>
+                          <th className="px-2 py-1 text-left font-medium">サイズ</th>
+                          <th className="px-2 py-1 text-left font-medium">カテゴリ</th>
+                          <th className="px-2 py-1 text-left font-medium">壁側</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-gray-800">
+                        {importPreview.slice(0, 4).map(b => (
+                          <tr key={b.id} className="border-t border-gray-100">
+                            <td className="px-2 py-1 whitespace-nowrap">{b.seatNumber ?? '—'}</td>
+                            <td className="px-2 py-1 max-w-[10rem] truncate">{b.name}</td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              {b.sizeMm ? `${b.sizeMm.width}×${b.sizeMm.depth}` : `${b.size}卓`}
+                            </td>
+                            <td className="px-2 py-1 whitespace-nowrap">{b.category}</td>
+                            <td className="px-2 py-1">{b.preferences.wall ? '○' : ''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-4 py-3 border-t border-gray-200 flex gap-2 shrink-0">
+              <button onClick={handleImportSheet} disabled={importPreview.length === 0}
+                className="flex-1 h-11 bg-green-600 text-white rounded active:bg-green-700 disabled:bg-gray-300 text-sm font-bold">
+                {importPreview.length}件を取り込む
+              </button>
+              <button onClick={() => { setSheetData(null); setMapping(null); }}
+                className="h-11 px-4 text-sm text-gray-600 border border-gray-300 rounded active:bg-gray-100">
+                キャンセル
+              </button>
+            </div>
+            <p className="px-4 pb-3 text-[11px] text-gray-500 shrink-0">
+              ※ 取り込むと現在のブースは置き換わります
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── 共有URL モーダル ─────────────────────────────────────────── */}
       {shareUrl && (

@@ -17,8 +17,14 @@ import {
     getBoothSizeMm,
     getBoothGridBounds,
     getBoothRectOffset,
+    getObstacleGridBounds,
+    buildSnapCandidates,
+    findSnap,
     rectsOverlap,
+    type GridRect,
+    type SnapCandidate,
 } from '@/utils/boothGeometry';
+import { alignBooths, distributeBooths, arrangeInLine, type AlignKind, type Axis } from '@/utils/align';
 
 const GRID_SIZE = 40;
 const MIN_SCALE = 0.05;
@@ -136,6 +142,11 @@ export default function CanvasArea({
     const multiDragAnchorRef = useRef<{ x: number; y: number } | null>(null);
     const boothLayerRef = useRef<any>(null);
     const boothTrRef = useRef<any>(null);
+    // スナップガイド（Konva ノードを直接操作して再レンダーを避ける）
+    const guideVRef = useRef<any>(null);
+    const guideHRef = useRef<any>(null);
+    const snapRef = useRef<{ xs: SnapCandidate[]; ys: SnapCandidate[] } | null>(null);
+    const [snapEnabled, setSnapEnabled] = useState(true);
 
     // パン操作
     const isPanningRef = useRef(false);
@@ -167,19 +178,28 @@ export default function CanvasArea({
     const placedBooths   = useMemo(() => booths.filter(b => b.isPlaced !== false), [booths]);
     const unplacedBooths = useMemo(() => booths.filter(b => b.isPlaced === false), [booths]);
 
-    /** 重なり・会場はみ出しのあるブースIDを検出 */
+    // 壁・柱を避けるかどうか。会場の外周を「壁」で囲う描き方をしている場合は
+    // 全ブースが警告になってしまうため、切り替えられるようにしてある。
+    const [avoidObstacles, setAvoidObstacles] = useState(true);
+    const obstacleRects = useMemo<GridRect[]>(
+        () => (avoidObstacles ? obstacles.map(getObstacleGridBounds) : []),
+        [obstacles, avoidObstacles],
+    );
+
+    /** 重なり・会場はみ出し・障害物との干渉があるブースIDを検出 */
     const problemBoothIds = useMemo(() => {
         const bad = new Set<string>();
         const rects = placedBooths.map(b => ({ id: b.id, ...getBoothGridBounds(b, dims) }));
         for (let i = 0; i < rects.length; i++) {
             const r = rects[i];
             if (r.x < 0 || r.y < 0 || r.x + r.w > venueCols || r.y + r.h > venueRows) bad.add(r.id);
+            if (obstacleRects.some(o => rectsOverlap(r, o))) bad.add(r.id);
             for (let j = i + 1; j < rects.length; j++) {
                 if (rectsOverlap(r, rects[j])) { bad.add(r.id); bad.add(rects[j].id); }
             }
         }
         return bad;
-    }, [placedBooths, dims, venueCols, venueRows]);
+    }, [placedBooths, dims, venueCols, venueRows, obstacleRects]);
 
     useEffect(() => {
         if (isBgEditing && bgNodeRef.current && bgTrRef.current) {
@@ -508,17 +528,19 @@ export default function CanvasArea({
         }));
     };
 
-    // --- 指定座標にブースを置いた場合に他と重なるか確認 ---
+    // --- 指定座標にブースを置いた場合に他のブース・障害物・会場外と干渉するか ---
     const checkBoothCollision = useCallback((movingId: string, newX: number, newY: number, boothList: Booth[]) => {
         const moving = boothList.find(b => b.id === movingId);
         if (!moving) return false;
-        const size = getBoothGridBounds({ ...moving, x: newX, y: newY }, dims);
+        const rect = getBoothGridBounds({ ...moving, x: newX, y: newY }, dims);
+        if (rect.x < 0 || rect.y < 0 || rect.x + rect.w > venueCols || rect.y + rect.h > venueRows) return true;
+        if (obstacleRects.some(o => rectsOverlap(rect, o))) return true;
         return boothList.some(b =>
             b.id !== movingId &&
             b.isPlaced !== false &&
-            rectsOverlap(size, getBoothGridBounds(b, dims)),
+            rectsOverlap(rect, getBoothGridBounds(b, dims)),
         );
-    }, [dims]);
+    }, [dims, venueCols, venueRows, obstacleRects]);
 
     // --- 重ならない最近傍グリッドを探す（新規追加・トレイからの配置で使用） ---
     const findFreePosition = useCallback((movingId: string, preferX: number, preferY: number, boothList: Booth[]) => {
@@ -1025,6 +1047,7 @@ export default function CanvasArea({
     // --- ブースのドラッグ ---
     const handleDragEndBooth = (e: any, id: string) => {
         if (mode === 'venue') return;
+        clearGuides();
         const rawX = Math.max(0, Math.round(e.target.x() / GRID_SIZE));
         const rawY = Math.max(0, Math.round(e.target.y() / GRID_SIZE));
 
@@ -1048,6 +1071,25 @@ export default function CanvasArea({
         e.target.to({ x: rawX * GRID_SIZE, y: rawY * GRID_SIZE, duration: 0.08 });
     };
 
+    /** スナップ時の補助線を Konva ノードに直接反映する */
+    const setGuide = (ref: React.RefObject<any>, grid: number | null, vertical: boolean) => {
+        const node = ref.current;
+        if (!node) return;
+        if (grid === null) { node.visible(false); return; }
+        const margin = GRID_SIZE * 2;
+        node.points(vertical
+            ? [grid * GRID_SIZE, -margin, grid * GRID_SIZE, venueRows * GRID_SIZE + margin]
+            : [-margin, grid * GRID_SIZE, venueCols * GRID_SIZE + margin, grid * GRID_SIZE]);
+        node.visible(true);
+    };
+
+    const clearGuides = () => {
+        setGuide(guideVRef, null, true);
+        setGuide(guideHRef, null, false);
+        snapRef.current = null;
+        boothLayerRef.current?.batchDraw();
+    };
+
     const handleDragStartBooth = (e: any, id: string) => {
         if (mode === 'venue') return;
         if (selectedBoothIds.has(id) && selectedBoothIds.size > 1) {
@@ -1055,28 +1097,56 @@ export default function CanvasArea({
                 booths.filter(b => selectedBoothIds.has(b.id)).map(b => [b.id, { x: b.x, y: b.y }]),
             );
             multiDragAnchorRef.current = { x: e.target.x(), y: e.target.y() };
+            snapRef.current = null;
+            return;
         }
+        // 単体ドラッグのときだけ、他のブース・障害物・会場端への吸着候補を作る
+        const self = booths.find(b => b.id === id);
+        if (!self || !snapEnabled) { snapRef.current = null; return; }
+        const others = placedBooths
+            .filter(b => b.id !== id)
+            .map(b => getBoothGridBounds(b, dims));
+        snapRef.current = buildSnapCandidates(
+            getBoothGridBounds(self, dims),
+            [...others, ...obstacleRects],
+            { cols: venueCols, rows: venueRows },
+        );
     };
 
     const handleDragMoveBooth = (e: any, id: string) => {
         if (mode === 'venue') return;
-        if (!selectedBoothIds.has(id) || selectedBoothIds.size <= 1) return;
-        const anchor = multiDragAnchorRef.current;
-        if (!anchor || !boothLayerRef.current) return;
 
-        const dxPx = e.target.x() - anchor.x;
-        const dyPx = e.target.y() - anchor.y;
-        selectedBoothIds.forEach(bid => {
-            if (bid === id) return;
-            const startPos = multiDragStartRef.current.get(bid);
-            if (!startPos) return;
-            const node = boothLayerRef.current.findOne(`#booth-group-${bid}`);
-            if (node) {
-                node.x(startPos.x * GRID_SIZE + dxPx);
-                node.y(startPos.y * GRID_SIZE + dyPx);
-            }
-        });
-        boothLayerRef.current.batchDraw();
+        // 複数選択: 他のブースを追随させる（吸着はしない）
+        if (selectedBoothIds.has(id) && selectedBoothIds.size > 1) {
+            const anchor = multiDragAnchorRef.current;
+            if (!anchor || !boothLayerRef.current) return;
+            const dxPx = e.target.x() - anchor.x;
+            const dyPx = e.target.y() - anchor.y;
+            selectedBoothIds.forEach(bid => {
+                if (bid === id) return;
+                const startPos = multiDragStartRef.current.get(bid);
+                if (!startPos) return;
+                const node = boothLayerRef.current.findOne(`#booth-group-${bid}`);
+                if (node) {
+                    node.x(startPos.x * GRID_SIZE + dxPx);
+                    node.y(startPos.y * GRID_SIZE + dyPx);
+                }
+            });
+            boothLayerRef.current.batchDraw();
+            return;
+        }
+
+        // 単体ドラッグ: 近い候補に吸着し、補助線を出す
+        const snap = snapRef.current;
+        if (!snap) return;
+        const threshold = 0.75; // グリッド単位
+        const sx = findSnap(e.target.x() / GRID_SIZE, snap.xs, threshold);
+        const sy = findSnap(e.target.y() / GRID_SIZE, snap.ys, threshold);
+        if (sx) e.target.x(sx.value * GRID_SIZE);
+        if (sy) e.target.y(sy.value * GRID_SIZE);
+        setGuide(guideVRef, sx ? sx.guide : null, true);
+        setGuide(guideHRef, sy ? sy.guide : null, false);
+        boothLayerRef.current?.batchDraw();
     };
 
     const handleBoothClick = (e: any, boothId: string) => {
@@ -1092,6 +1162,12 @@ export default function CanvasArea({
             setSelectedBoothIds(new Set([boothId]));
         }
     };
+
+    // --- 整列・等間隔配置 ---
+    const [lineGap, setLineGap] = useState(1);
+    const doAlign      = (kind: AlignKind) => onBoothsChange(alignBooths(booths, targetBoothIds(), kind, dims));
+    const doDistribute = (axis: Axis)      => onBoothsChange(distributeBooths(booths, targetBoothIds(), axis, dims));
+    const doArrange    = (axis: Axis)      => onBoothsChange(arrangeInLine(booths, targetBoothIds(), axis, lineGap, dims));
 
     const rotateSelectedBooths = () => {
         const ids = targetBoothIds();
@@ -1250,6 +1326,24 @@ export default function CanvasArea({
                                 onChange={(e) => setSeatFontSize(Number(e.target.value))}
                                 className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
                             <span className="text-xs font-bold text-gray-700 w-6 text-right">{seatFontSize}</span>
+                        </div>
+
+                        <div className="border-t border-gray-100 pt-2 space-y-1.5">
+                            <label className="flex items-center gap-2 text-xs text-gray-700">
+                                <input type="checkbox" checked={snapEnabled}
+                                    onChange={(e) => setSnapEnabled(e.target.checked)} className="w-4 h-4" />
+                                ドラッグ時に他のブースへ吸着
+                            </label>
+                            <label className="flex items-start gap-2 text-xs text-gray-700">
+                                <input type="checkbox" checked={avoidObstacles}
+                                    onChange={(e) => setAvoidObstacles(e.target.checked)} className="w-4 h-4 mt-0.5" />
+                                <span>
+                                    壁・柱との重なりを警告
+                                    <span className="block text-[10px] text-gray-400">
+                                        会場の外周を壁で囲っている場合はオフに
+                                    </span>
+                                </span>
+                            </label>
                         </div>
 
                         <div className="border-t border-gray-100 pt-2">
@@ -1536,6 +1630,62 @@ export default function CanvasArea({
                             className="w-8 h-8 text-gray-400 active:text-gray-700">✕</button>
                     </div>
                     <div className="flex flex-col gap-2">
+                        {/* 整列 */}
+                        <div className="border border-gray-200 rounded-lg p-2">
+                            <p className="text-[11px] font-semibold text-gray-500 mb-1.5">整列</p>
+                            <div className="grid grid-cols-6 gap-1">
+                                {([
+                                    { kind: 'left'    as AlignKind, label: '⇤', title: '左揃え' },
+                                    { kind: 'hcenter' as AlignKind, label: '⇹', title: '左右中央' },
+                                    { kind: 'right'   as AlignKind, label: '⇥', title: '右揃え' },
+                                    { kind: 'top'     as AlignKind, label: '⤒', title: '上揃え' },
+                                    { kind: 'vcenter' as AlignKind, label: '⇳', title: '上下中央' },
+                                    { kind: 'bottom'  as AlignKind, label: '⤓', title: '下揃え' },
+                                ]).map(({ kind, label, title }) => (
+                                    <button key={kind} onClick={() => doAlign(kind)} title={title}
+                                        className="h-9 rounded bg-gray-50 active:bg-gray-200 text-gray-700 text-sm">
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <p className="text-[11px] font-semibold text-gray-500 mt-2 mb-1.5">
+                                等間隔に分布 <span className="font-normal text-gray-400">(3件以上)</span>
+                            </p>
+                            <div className="grid grid-cols-2 gap-1">
+                                <button onClick={() => doDistribute('h')} disabled={selectedBoothIds.size < 3}
+                                    className="h-9 rounded bg-gray-50 active:bg-gray-200 disabled:opacity-40 text-gray-700 text-xs">
+                                    横に均等
+                                </button>
+                                <button onClick={() => doDistribute('v')} disabled={selectedBoothIds.size < 3}
+                                    className="h-9 rounded bg-gray-50 active:bg-gray-200 disabled:opacity-40 text-gray-700 text-xs">
+                                    縦に均等
+                                </button>
+                            </div>
+
+                            <p className="text-[11px] font-semibold text-gray-500 mt-2 mb-1.5">
+                                隙間を指定して並べ直す
+                            </p>
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                                <input type="number" min={0} max={20} value={lineGap}
+                                    onChange={(e) => setLineGap(Math.max(0, Number(e.target.value)))}
+                                    className="w-14 border rounded px-1 py-1.5 text-xs text-gray-900 text-right" />
+                                <span className="text-[11px] text-gray-500 whitespace-nowrap">
+                                    マス = {lineGap * dims.gridUnitMm}mm
+                                </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1">
+                                <button onClick={() => doArrange('h')}
+                                    className="h-9 rounded bg-blue-50 active:bg-blue-100 text-blue-700 text-xs font-medium">
+                                    横に並べる
+                                </button>
+                                <button onClick={() => doArrange('v')}
+                                    className="h-9 rounded bg-blue-50 active:bg-blue-100 text-blue-700 text-xs font-medium">
+                                    縦に並べる
+                                </button>
+                            </div>
+                        </div>
+
                         <button onClick={rotateSelectedBooths}
                             className="w-full py-2.5 bg-blue-50 active:bg-blue-100 text-blue-700 rounded-lg text-sm font-medium">
                             ⟳ まとめて90度回転
@@ -1785,6 +1935,11 @@ export default function CanvasArea({
                                 onTransformEnd={selectedBoothId === booth.id ? handleBoothTransformEnd : undefined}
                             />
                         ))}
+                        {/* スナップ補助線 */}
+                        <Line ref={guideVRef} visible={false} points={[]} stroke="#ec4899"
+                            strokeWidth={1} dash={[4, 4]} listening={false} perfectDrawEnabled={false} />
+                        <Line ref={guideHRef} visible={false} points={[]} stroke="#ec4899"
+                            strokeWidth={1} dash={[4, 4]} listening={false} perfectDrawEnabled={false} />
                         <Transformer
                             ref={boothTrRef}
                             rotateEnabled={false}
