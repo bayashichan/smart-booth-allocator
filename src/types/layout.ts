@@ -76,6 +76,27 @@ export interface TextLabel {
   rotation?: number;
 }
 
+// 会場サイズ（グリッド数）
+export interface VenueSize {
+  cols: number;
+  rows: number;
+}
+
+// 寸法設定（アプリ全体で共有する唯一の基準値）
+export interface DimensionSettings {
+  gridUnitMm: number;       // 1マスの実寸 (mm)
+  baseTableWidthMm: number; // 1.0卓の幅 (mm)
+  baseTableDepthMm: number; // 1.0卓の奥行 (mm)
+}
+
+export const DEFAULT_DIMENSIONS: DimensionSettings = {
+  gridUnitMm: 450,
+  baseTableWidthMm: 1800,
+  baseTableDepthMm: 900,
+};
+
+export type CategoryColorMap = Record<string, { stroke: string; fill: string }>;
+
 // 保存ファイル形式
 export interface SaveFile {
   version: number;
@@ -83,4 +104,8 @@ export interface SaveFile {
   booths: Booth[];
   obstacles: Obstacle[];
   textLabels: TextLabel[];
+  // v2 以降。古いデータには存在しないため任意。
+  venue?: VenueSize;
+  dimensions?: DimensionSettings;
+  categoryColors?: CategoryColorMap;
 }

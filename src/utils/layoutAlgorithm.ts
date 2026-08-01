@@ -1,16 +1,9 @@
-import { Booth } from '@/types/layout';
+import { Booth, DimensionSettings, DEFAULT_DIMENSIONS } from '@/types/layout';
 
-const GRID_UNIT_MM        = 450;
-const BASE_TABLE_W_MM     = 1800;
-const BASE_TABLE_DEPTH_MM = 900;
-const BOOTH_GAP           = 1; // ブース間の隙間（グリッド数）
-const AISLE               = 2; // 通路幅（グリッド数）
-
-const boothGridW = (booth: Booth) =>
-    Math.max(1, Math.round((booth.sizeMm?.width ?? booth.size * BASE_TABLE_W_MM) / GRID_UNIT_MM));
-
-const boothGridH = (booth: Booth) =>
-    Math.max(1, Math.round((booth.sizeMm?.depth ?? BASE_TABLE_DEPTH_MM) / GRID_UNIT_MM));
+export interface AutoLayoutOptions extends Partial<DimensionSettings> {
+    boothGap?: number; // ブース間の隙間（グリッド数）
+    aisle?: number;    // 通路幅（グリッド数）
+}
 
 /**
  * 自然順ソート比較関数
@@ -39,7 +32,24 @@ const naturalCompare = (a: string, b: string): number => {
 
 const seatNum = (booth: Booth): string => booth.seatNumber ?? booth.name ?? '';
 
-export const autoLayout = (booths: Booth[], gridRows: number, gridCols: number): Booth[] => {
+export const autoLayout = (
+    booths: Booth[],
+    gridRows: number,
+    gridCols: number,
+    options: AutoLayoutOptions = {},
+): Booth[] => {
+    const gridUnitMm       = options.gridUnitMm       ?? DEFAULT_DIMENSIONS.gridUnitMm;
+    const baseTableWidthMm = options.baseTableWidthMm ?? DEFAULT_DIMENSIONS.baseTableWidthMm;
+    const baseTableDepthMm = options.baseTableDepthMm ?? DEFAULT_DIMENSIONS.baseTableDepthMm;
+    const BOOTH_GAP        = options.boothGap ?? 1;
+    const AISLE            = options.aisle    ?? 2;
+
+    const boothGridW = (booth: Booth) =>
+        Math.max(1, Math.round((booth.sizeMm?.width ?? booth.size * baseTableWidthMm) / gridUnitMm));
+
+    const boothGridH = (booth: Booth) =>
+        Math.max(1, Math.round((booth.sizeMm?.depth ?? baseTableDepthMm) / gridUnitMm));
+
     const newBooths: Booth[] = [];
     const placed: { x: number; y: number; w: number; h: number }[] = [];
 
