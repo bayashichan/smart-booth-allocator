@@ -16,6 +16,7 @@ import {
   guessMapping,
   buildBooths,
   MAPPING_FIELDS,
+  UNUSED_COLUMN,
   type ColumnMapping,
   type SheetData,
 } from '@/utils/csvParser';
@@ -359,7 +360,7 @@ export default function Home() {
     try {
       const data = await fetchSheet(csvUrl);
       setSheetData(data);
-      setMapping(guessMapping(data.headers));
+      setMapping(guessMapping(data));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'スプレッドシートの読み込みに失敗しました');
     } finally {
@@ -648,7 +649,7 @@ export default function Home() {
             <div className="px-4 py-3 border-b border-gray-200 shrink-0">
               <h3 className="text-base font-bold text-gray-800">列の対応づけ</h3>
               <p className="text-xs text-gray-500 mt-0.5">
-                {sheetData.rows.length}行 / {sheetData.headers.length}列を検出しました。
+                {sheetData.rows.length}行 / {sheetData.columns.length}列を検出しました。
                 どの列を使うか確認してください。
               </p>
             </div>
@@ -662,11 +663,15 @@ export default function Home() {
                   </div>
                   <select
                     value={mapping[key]}
-                    onChange={(e) => setMapping({ ...mapping, [key]: e.target.value })}
+                    onChange={(e) => setMapping({ ...mapping, [key]: Number(e.target.value) })}
                     className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-2 text-sm text-gray-900 bg-white"
                   >
-                    <option value="">— 使わない —</option>
-                    {sheetData.headers.map(h => <option key={h} value={h}>{h}</option>)}
+                    <option value={UNUSED_COLUMN}>— 使わない —</option>
+                    {sheetData.columns.map(c => (
+                      <option key={c.index} value={c.index}>
+                        {c.letter}列{c.header ? `: ${c.header}` : '（見出しなし）'}
+                      </option>
+                    ))}
                   </select>
                 </div>
               ))}
