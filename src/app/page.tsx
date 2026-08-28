@@ -12,6 +12,7 @@ import {
   LegendConfig,
   DEFAULT_DIMENSIONS,
   DEFAULT_BACKGROUND_COLOR,
+  DEFAULT_BOOTH_FONT_SIZE,
   DEFAULT_LEGEND,
 } from '@/types/layout';
 import {
@@ -99,6 +100,7 @@ type Snapshot = {
   categoryColors: CategoryColorMap;
   backgroundColor: string;
   legend: LegendConfig;
+  seatFontSize: number;
 };
 
 type ChangeOptions = { coalesceKey?: string };
@@ -124,6 +126,7 @@ export default function Home() {
   const [categoryColors, setCategoryColors] = useState<CategoryColorMap>({});
   const [backgroundColor, setBackgroundColor] = useState(DEFAULT_BACKGROUND_COLOR);
   const [legend, setLegend] = useState<LegendConfig>(DEFAULT_LEGEND);
+  const [seatFontSize, setSeatFontSize] = useState(DEFAULT_BOOTH_FONT_SIZE);
   const [venueInputMode, setVenueInputMode] = useState<'grid' | 'mm'>('grid');
 
   const [shareUrl, setShareUrl] = useState('');
@@ -145,7 +148,7 @@ export default function Home() {
   const stateRef   = useRef<Snapshot>({
     booths, obstacles, textLabels,
     venue: { cols: layoutCols, rows: layoutRows },
-    dims, categoryColors, backgroundColor, legend,
+    dims, categoryColors, backgroundColor, legend, seatFontSize,
   });
   const isRestoringRef = useRef(false);
   const lastCoalesceRef = useRef<{ key: string; at: number } | null>(null);
@@ -156,10 +159,10 @@ export default function Home() {
     stateRef.current = {
       booths, obstacles, textLabels,
       venue: { cols: layoutCols, rows: layoutRows },
-      dims, categoryColors, backgroundColor, legend,
+      dims, categoryColors, backgroundColor, legend, seatFontSize,
     };
   }, [booths, obstacles, textLabels, layoutCols, layoutRows, dims, categoryColors,
-      backgroundColor, legend]);
+      backgroundColor, legend, seatFontSize]);
 
   const applySnapshot = (s: Snapshot) => {
     isRestoringRef.current = true;
@@ -172,6 +175,7 @@ export default function Home() {
     setCategoryColors(s.categoryColors);
     setBackgroundColor(s.backgroundColor);
     setLegend(s.legend);
+    setSeatFontSize(s.seatFontSize);
     isRestoringRef.current = false;
   };
 
@@ -260,6 +264,10 @@ export default function Home() {
     snapshot(opts); setLegend(v);
   }, [snapshot]);
 
+  const setSeatFontSizeH = useCallback((v: number) => {
+    snapshot({ coalesceKey: 'booth-font-size' }); setSeatFontSize(v);
+  }, [snapshot]);
+
   const buildSaveFile = useCallback((): SaveFile => ({
     version: 3,
     savedAt: new Date().toISOString(),
@@ -269,8 +277,9 @@ export default function Home() {
     categoryColors,
     backgroundColor,
     legend,
+    boothFontSize: seatFontSize,
   }), [booths, obstacles, textLabels, layoutCols, layoutRows, dims, categoryColors,
-       backgroundColor, legend]);
+       backgroundColor, legend, seatFontSize]);
 
   const applySaveFile = useCallback((data: SaveFile) => {
     if (data.booths)     setBooths(data.booths);
@@ -285,6 +294,7 @@ export default function Home() {
     // 背景色・凡例は v3 から。古いデータは既定値のままにする。
     setBackgroundColor(data.backgroundColor ?? DEFAULT_BACKGROUND_COLOR);
     setLegend({ ...DEFAULT_LEGEND, ...(data.legend ?? {}) });
+    setSeatFontSize(data.boothFontSize ?? DEFAULT_BOOTH_FONT_SIZE);
   }, []);
 
   // ─── 起動時: URL パラメータ or 自動保存の復元 ─────────────────────────────
@@ -947,6 +957,8 @@ export default function Home() {
           dims={dims}
           categoryColors={categoryColors}
           onCategoryColorsChange={setCategoryColorsH}
+          seatFontSize={seatFontSize}
+          onSeatFontSizeChange={setSeatFontSizeH}
           backgroundColor={backgroundColor}
           onBackgroundColorChange={setBackgroundColorH}
           legend={legend}

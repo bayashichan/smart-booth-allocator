@@ -6,6 +6,7 @@ import BoothUnit, { resolveBoothColors, resolveCategoryColors } from './BoothUni
 import ObstacleComponent from './ObstacleComponent';
 import TextLabelComponent from './TextLabelComponent';
 import NumberField from './NumberField';
+import ColorField from './ColorField';
 import {
     Booth,
     Obstacle,
@@ -33,6 +34,9 @@ const GRID_SIZE = 40;
 /** 障害物の最小サイズ (mm) */
 const MIN_OBSTACLE_MM = 10;
 
+/** ブースの文字サイズの許容範囲 (px) */
+const clampFontSize = (n: number) => Math.min(200, Math.max(4, Math.round(n)));
+
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 5;
 
@@ -57,6 +61,8 @@ interface CanvasAreaProps {
     dims: DimensionSettings;
     categoryColors: CategoryColorMap;
     onCategoryColorsChange: (colors: CategoryColorMap) => void;
+    seatFontSize: number;
+    onSeatFontSizeChange: (size: number) => void;
     backgroundColor: string;
     onBackgroundColorChange: (color: string) => void;
     legend: LegendConfig;
@@ -107,17 +113,6 @@ const getLegendLayout = (items: LegendItem[], legend: LegendConfig) => {
     };
 };
 
-/**
- * 手入力のカラーコードを #rrggbb に揃える。
- * 「fabd5f」「#FABD5F」「fa0」のいずれも受け付け、不正なら null。
- */
-export const normalizeHexColor = (raw: string): string | null => {
-    const s = raw.trim().replace(/^#/, '');
-    if (/^[0-9a-fA-F]{3}$/.test(s)) return '#' + [...s].map(c => c + c).join('').toLowerCase();
-    if (/^[0-9a-fA-F]{6}$/.test(s)) return '#' + s.toLowerCase();
-    return null;
-};
-
 const escapeXml = (s: string) =>
     String(s).replace(/[<>&'"]/g, (c) =>
         ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c] as string),
@@ -144,6 +139,8 @@ export default function CanvasArea({
     dims,
     categoryColors,
     onCategoryColorsChange,
+    seatFontSize,
+    onSeatFontSizeChange,
     backgroundColor,
     onBackgroundColorChange,
     legend,
@@ -161,8 +158,6 @@ export default function CanvasArea({
     // AI プロバイダー選択
     const [aiProvider, setAiProvider] = useState<'gemini' | 'groq'>('gemini');
 
-    const [seatFontSize, setSeatFontSize] = useState(14);
-
     // 障害物描画設定
     const [obstacleColor, setObstacleColor] = useState('#607d8b');
     const [obstacleStrokeWidth, setObstacleStrokeWidth] = useState(2);
@@ -172,10 +167,6 @@ export default function CanvasArea({
     // テキストラベル 選択・スタイル設定
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [textSettings, setTextSettings] = useState({ fontSize: 20, color: '#1f2937', fontStyle: '' });
-
-    // 背景色のカラーコード入力（# は欄の外に出すので値には含めない）
-    const [bgHexInput, setBgHexInput] = useState(backgroundColor.replace(/^#/, ''));
-    useEffect(() => { setBgHexInput(backgroundColor.replace(/^#/, '')); }, [backgroundColor]);
 
     // UI Toggles
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -420,13 +411,14 @@ export default function CanvasArea({
             const rot = bo.rotation || 0;
             const off = getBoothRectOffset(rot, w, h);
             const text = escapeXml(bo.seatNumber || bo.name);
+            const textSize = bo.fontSize ?? seatFontSize;
             // 矩形の中心（グループ内座標）。文字は逆回転させて水平に保つ。
             const cx = off.x + w / 2;
             const cy = off.y + h / 2;
 
             return `<g transform="translate(${bo.x * GRID_SIZE}, ${bo.y * GRID_SIZE}) rotate(${rot})">
                 <rect x="${off.x}" y="${off.y}" width="${w}" height="${h}" fill="${colors.fill}" stroke="${colors.stroke}" stroke-width="2" rx="2" />
-                <text x="${cx}" y="${cy}" font-family="sans-serif" font-size="${seatFontSize}px" font-weight="bold" fill="${colors.text}" text-anchor="middle" dominant-baseline="central" transform="rotate(${-rot}, ${cx}, ${cy})">${text}</text>
+                <text x="${cx}" y="${cy}" font-family="sans-serif" font-size="${textSize}px" font-weight="bold" fill="${colors.text}" text-anchor="middle" dominant-baseline="central" transform="rotate(${-rot}, ${cx}, ${cy})">${text}</text>
             </g>`;
         }).join('\n');
 
@@ -615,6 +607,24 @@ export default function CanvasArea({
             if (target === 'fill')   return { ...b, fillColor: color };
             return { ...b, textColor: color };
         }), { coalesceKey: `booth-color-${target}` });
+    };
+
+    const updateSelectedBoothsFontSize = (size: number) => {
+        const ids = targetBoothIds();
+        if (ids.size === 0) return;
+        onBoothsChange(
+            booths.map(b => (ids.has(b.id) ? { ...b, fontSize: size } : b)),
+            { coalesceKey: 'booth-font-size' },
+        );
+    };
+
+    const resetBoothFontSize = (boothId: string) => {
+        onBoothsChange(booths.map(b => {
+            if (b.id !== boothId) return b;
+            const next = { ...b };
+            delete next.fontSize;
+            return next;
+        }));
     };
 
     const resetBoothColor = (boothId: string, target: 'stroke' | 'fill' | 'text') => {
@@ -1438,13 +1448,16 @@ export default function CanvasArea({
                 )}
 
                 {mode === 'booth' && isSettingsOpen && (
-                    <div className="bg-white/97 backdrop-blur shadow-xl rounded-xl p-3 border border-gray-200 flex flex-col gap-3 w-60 max-h-[55vh] overflow-y-auto">
+                    <div className="bg-white/97 backdrop-blur shadow-xl rounded-xl p-3 border border-gray-200 flex flex-col gap-3 w-72 max-w-[calc(100vw-1.5rem)] max-h-[55vh] overflow-y-auto">
                         <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-600 whitespace-nowrap">文字サイズ</span>
-                            <input type="range" min={8} max={32} step={1} value={seatFontSize}
-                                onChange={(e) => setSeatFontSize(Number(e.target.value))}
-                                className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
-                            <span className="text-xs font-bold text-gray-700 w-6 text-right">{seatFontSize}</span>
+                            <input type="range" min={8} max={40} step={1} value={Math.min(40, seatFontSize)}
+                                onChange={(e) => onSeatFontSizeChange(Number(e.target.value))}
+                                className="flex-1 min-w-0 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
+                            <NumberField value={seatFontSize} min={4} max={200} step={1}
+                                onCommit={(n) => onSeatFontSizeChange(clampFontSize(n))}
+                                aria-label="ブースの文字サイズ"
+                                className="w-12 shrink-0 border border-gray-200 rounded px-1 py-1 text-[11px] text-right text-gray-900 bg-white" />
                         </div>
 
                         <div className="border-t border-gray-100 pt-2 space-y-1.5">
@@ -1466,55 +1479,48 @@ export default function CanvasArea({
                         </div>
 
                         <div className="border-t border-gray-100 pt-2">
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs text-gray-600 whitespace-nowrap">背景色</span>
-                                <input type="color" value={backgroundColor}
-                                    onChange={(e) => onBackgroundColorChange(e.target.value)}
-                                    className="w-7 h-7 shrink-0 rounded border border-gray-200 cursor-pointer p-0" />
-                                <div className="flex items-center flex-1 min-w-0 border border-gray-200 rounded bg-white px-1.5">
-                                    <span className="text-[11px] text-gray-400 shrink-0">#</span>
-                                    <input type="text" value={bgHexInput} placeholder="ffffff"
-                                        maxLength={7} spellCheck={false} autoComplete="off"
-                                        onChange={(e) => {
-                                            setBgHexInput(e.target.value.replace(/^#/, ''));
-                                            const hex = normalizeHexColor(e.target.value);
-                                            if (hex) onBackgroundColorChange(hex);
-                                        }}
-                                        // 途中まで打った不正な値は、欄を離れたら現在の色に戻す
-                                        onBlur={() => setBgHexInput(backgroundColor.replace(/^#/, ''))}
-                                        className="w-full min-w-0 px-1 py-1 text-[11px] text-gray-900 bg-transparent outline-none" />
-                                </div>
-                                {backgroundColor.toLowerCase() !== DEFAULT_BACKGROUND_COLOR && (
-                                    <button className="text-[10px] text-gray-400 hover:text-red-500 shrink-0"
-                                        onClick={() => onBackgroundColorChange(DEFAULT_BACKGROUND_COLOR)}>↩</button>
-                                )}
-                            </div>
-                            <p className="text-[10px] text-gray-400 mt-1">
-                                図面の地色（出力にも反映）。fabd5f のように直接入力できます。
-                            </p>
+                            <ColorField
+                                label="背景色（図面の地色。出力にも反映）"
+                                value={backgroundColor}
+                                onChange={onBackgroundColorChange}
+                                onReset={backgroundColor.toLowerCase() !== DEFAULT_BACKGROUND_COLOR
+                                    ? () => onBackgroundColorChange(DEFAULT_BACKGROUND_COLOR)
+                                    : undefined}
+                            />
                         </div>
 
                         <div className="border-t border-gray-100 pt-2">
-                            <p className="text-[11px] font-semibold text-gray-500 mb-2">カテゴリカラー</p>
-                            {CATEGORY_PRESETS.map(({ key, def }) => (
-                                <div key={key} className="flex items-center gap-2 mb-1">
-                                    <input type="color" value={categoryColors[key]?.stroke ?? def}
-                                        onChange={(e) => onCategoryColorsChange({
-                                            ...categoryColors,
-                                            [key]: { stroke: e.target.value, fill: e.target.value + '22' },
-                                        })}
-                                        className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0" />
-                                    <span className="text-[11px] text-gray-600 truncate">{key}</span>
-                                    {categoryColors[key] && (
-                                        <button className="text-[10px] text-gray-400 hover:text-red-500 ml-auto"
-                                            onClick={() => {
-                                                const next = { ...categoryColors };
-                                                delete next[key];
-                                                onCategoryColorsChange(next);
-                                            }}>↩</button>
-                                    )}
-                                </div>
-                            ))}
+                            <p className="text-[11px] font-semibold text-gray-500 mb-1">カテゴリカラー</p>
+                            <p className="text-[10px] text-gray-400 mb-2">
+                                枠線と背景（塗り）を別々に指定できます。個別に色を変えたブースはそちらが優先されます。
+                            </p>
+                            {CATEGORY_PRESETS.map(({ key }) => {
+                                const c = resolveCategoryColors(key, categoryColors);
+                                const setColor = (patch: Partial<{ stroke: string; fill: string }>) =>
+                                    onCategoryColorsChange({ ...categoryColors, [key]: { ...c, ...patch } });
+                                return (
+                                    <div key={key} className="mb-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[11px] text-gray-600 truncate">{key}</span>
+                                            {categoryColors[key] && (
+                                                <button className="text-[10px] text-gray-400 hover:text-red-500 ml-auto"
+                                                    title="既定の色に戻す"
+                                                    onClick={() => {
+                                                        const next = { ...categoryColors };
+                                                        delete next[key];
+                                                        onCategoryColorsChange(next);
+                                                    }}>↩</button>
+                                            )}
+                                        </div>
+                                        <div className="flex gap-1.5 mt-0.5">
+                                            <ColorField className="flex-1 min-w-0" label="枠線" value={c.stroke}
+                                                onChange={(hex) => setColor({ stroke: hex })} />
+                                            <ColorField className="flex-1 min-w-0" label="背景" value={c.fill}
+                                                onChange={(hex) => setColor({ fill: hex })} />
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
 
                         <div className="border-t border-gray-100 pt-2 space-y-2">
@@ -1748,24 +1754,34 @@ export default function CanvasArea({
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-3">
+                        <div className="space-y-1.5">
+                            <p className="text-[11px] font-semibold text-gray-500">このブースの色</p>
                             {([
-                                { label: '枠線', target: 'stroke' as const },
-                                { label: '塗り', target: 'fill'   as const },
-                                { label: '文字', target: 'text'   as const },
-                            ]).map(({ label, target }) => {
+                                { label: '枠線', target: 'stroke' as const, field: 'strokeColor' as const },
+                                { label: '背景', target: 'fill'   as const, field: 'fillColor'   as const },
+                                { label: '文字', target: 'text'   as const, field: 'textColor'   as const },
+                            ]).map(({ label, target, field }) => {
                                 const c = resolveBoothColors(selectedBooth, categoryColors);
                                 const value = target === 'stroke' ? c.stroke : target === 'fill' ? c.fill : c.text;
                                 return (
-                                    <div key={target} className="flex flex-col items-center gap-1">
-                                        <input type="color" value={value.length === 9 ? value.slice(0, 7) : value}
-                                            onChange={(e) => updateSelectedBoothsColor(e.target.value, target)}
-                                            className="w-9 h-9 rounded border border-gray-200 cursor-pointer p-0.5" title={label} />
-                                        <button onClick={() => resetBoothColor(selectedBooth.id, target)}
-                                            className="text-[10px] text-gray-400 active:text-gray-700">{label} ↩</button>
-                                    </div>
+                                    <ColorField key={target} label={label} value={value}
+                                        onChange={(hex) => updateSelectedBoothsColor(hex, target)}
+                                        onReset={selectedBooth[field] ? () => resetBoothColor(selectedBooth.id, target) : undefined} />
                                 );
                             })}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs text-gray-700 shrink-0">文字サイズ</label>
+                            <NumberField value={selectedBooth.fontSize ?? seatFontSize} min={4} max={200} step={1}
+                                onCommit={(n) => updateSelectedBoothsFontSize(clampFontSize(n))}
+                                aria-label="このブースの文字サイズ"
+                                className={`w-16 border rounded px-2 py-1.5 text-sm text-right text-gray-900 ${selectedBooth.fontSize ? 'bg-white border-blue-300' : 'bg-gray-50'}`} />
+                            <span className="text-[10px] text-gray-400">px</span>
+                            {selectedBooth.fontSize !== undefined && (
+                                <button onClick={() => resetBoothFontSize(selectedBooth.id)} title="全体の文字サイズに戻す"
+                                    className="text-[10px] text-gray-400 active:text-gray-700 ml-auto whitespace-nowrap">全体に戻す ↩</button>
+                            )}
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
@@ -1867,13 +1883,30 @@ export default function CanvasArea({
                             className="w-full py-2.5 bg-blue-50 active:bg-blue-100 text-blue-700 rounded-lg text-sm font-medium">
                             ⟳ まとめて90度回転
                         </button>
-                        <div className="flex items-center gap-3 justify-center py-1">
-                            <input type="color" defaultValue="#cccccc" onChange={(e) => updateSelectedBoothsColor(e.target.value, 'stroke')}
-                                className="w-9 h-9 rounded border border-gray-300 cursor-pointer p-0.5" title="一括 枠線色" />
-                            <input type="color" defaultValue="#ffffff" onChange={(e) => updateSelectedBoothsColor(e.target.value, 'fill')}
-                                className="w-9 h-9 rounded border border-gray-300 cursor-pointer p-0.5" title="一括 塗り色" />
-                            <input type="color" defaultValue="#333333" onChange={(e) => updateSelectedBoothsColor(e.target.value, 'text')}
-                                className="w-9 h-9 rounded border border-gray-300 cursor-pointer p-0.5" title="一括 文字色" />
+                        <div className="border border-gray-200 rounded-lg p-2 space-y-1.5">
+                            <p className="text-[11px] font-semibold text-gray-500">まとめて色を変える</p>
+                            {([
+                                { label: '枠線', target: 'stroke' as const },
+                                { label: '背景', target: 'fill'   as const },
+                                { label: '文字', target: 'text'   as const },
+                            ]).map(({ label, target }) => {
+                                // 値は選択中の先頭ブースの色を初期表示に使う
+                                const head = booths.find(b => selectedBoothIds.has(b.id));
+                                const c = head ? resolveBoothColors(head, categoryColors) : null;
+                                const value = !c ? '#cccccc' : target === 'stroke' ? c.stroke : target === 'fill' ? c.fill : c.text;
+                                return (
+                                    <ColorField key={target} label={label} value={value}
+                                        onChange={(hex) => updateSelectedBoothsColor(hex, target)} />
+                                );
+                            })}
+                            <div className="flex items-center gap-2 pt-0.5">
+                                <label className="text-[11px] text-gray-600 shrink-0">文字サイズ</label>
+                                <NumberField value={seatFontSize} min={4} max={200} step={1}
+                                    onCommit={(n) => updateSelectedBoothsFontSize(clampFontSize(n))}
+                                    aria-label="選択中ブースの文字サイズ"
+                                    className="w-16 border border-gray-200 rounded px-2 py-1.5 text-sm text-right text-gray-900 bg-white" />
+                                <span className="text-[10px] text-gray-400">px</span>
+                            </div>
                         </div>
                         <button onClick={unplaceSelectedBooths}
                             className="w-full py-2.5 bg-amber-50 active:bg-amber-100 text-amber-700 rounded-lg text-sm font-medium">

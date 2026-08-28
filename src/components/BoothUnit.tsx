@@ -75,6 +75,8 @@ export default function BoothUnit({
 
     const colors = resolveBoothColors(data, categoryColors);
     const displayText = data.seatNumber ? data.seatNumber : data.name;
+    // ブース個別の指定があればそちらを優先する
+    const textSize = data.fontSize ?? fontSize;
 
     const rot = data.rotation ?? 0;
     // 回転しても左上がグリッド座標と一致するよう矩形をオフセット
@@ -121,7 +123,7 @@ export default function BoothUnit({
                 width={textAreaWidth}
                 height={textAreaHeight}
                 text={displayText}
-                fontSize={fontSize}
+                fontSize={textSize}
                 fontStyle="bold"
                 align="center"
                 verticalAlign="middle"

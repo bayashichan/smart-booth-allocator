@@ -18,6 +18,7 @@ export interface Booth {
   strokeColor?: string;  // 枠線色
   fillColor?: string;    // 塗りつぶし色
   textColor?: string;    // 文字色
+  fontSize?: number;     // このブースだけの文字サイズ (px)。未指定なら全体設定
   // 配置情報
   x: number; // グリッド座標 X
   y: number; // グリッド座標 Y
@@ -100,6 +101,9 @@ export type CategoryColorMap = Record<string, { stroke: string; fill: string }>;
 /** 図面の背景色（会場の地色。エクスポートの下地にも使う） */
 export const DEFAULT_BACKGROUND_COLOR = '#ffffff';
 
+/** ブースに書く文字の既定サイズ (px) */
+export const DEFAULT_BOOTH_FONT_SIZE = 14;
+
 /** 図面に置くカテゴリカラーの凡例 */
 export interface LegendConfig {
   visible: boolean;
@@ -131,4 +135,6 @@ export interface SaveFile {
   // v3 以降。背景色と凡例。
   backgroundColor?: string;
   legend?: LegendConfig;
+  // ブース文字サイズの全体設定
+  boothFontSize?: number;
 }
