@@ -107,6 +107,17 @@ const getLegendLayout = (items: LegendItem[], legend: LegendConfig) => {
     };
 };
 
+/**
+ * 手入力のカラーコードを #rrggbb に揃える。
+ * 「fabd5f」「#FABD5F」「fa0」のいずれも受け付け、不正なら null。
+ */
+export const normalizeHexColor = (raw: string): string | null => {
+    const s = raw.trim().replace(/^#/, '');
+    if (/^[0-9a-fA-F]{3}$/.test(s)) return '#' + [...s].map(c => c + c).join('').toLowerCase();
+    if (/^[0-9a-fA-F]{6}$/.test(s)) return '#' + s.toLowerCase();
+    return null;
+};
+
 const escapeXml = (s: string) =>
     String(s).replace(/[<>&'"]/g, (c) =>
         ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c] as string),
@@ -161,6 +172,10 @@ export default function CanvasArea({
     // テキストラベル 選択・スタイル設定
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [textSettings, setTextSettings] = useState({ fontSize: 20, color: '#1f2937', fontStyle: '' });
+
+    // 背景色のカラーコード入力（# は欄の外に出すので値には含めない）
+    const [bgHexInput, setBgHexInput] = useState(backgroundColor.replace(/^#/, ''));
+    useEffect(() => { setBgHexInput(backgroundColor.replace(/^#/, '')); }, [backgroundColor]);
 
     // UI Toggles
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1450,16 +1465,33 @@ export default function CanvasArea({
                             </label>
                         </div>
 
-                        <div className="border-t border-gray-100 pt-2 flex items-center gap-2">
-                            <span className="text-xs text-gray-600 whitespace-nowrap">背景色</span>
-                            <input type="color" value={backgroundColor}
-                                onChange={(e) => onBackgroundColorChange(e.target.value)}
-                                className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0" />
-                            <span className="text-[10px] text-gray-400">図面の地色（出力にも反映）</span>
-                            {backgroundColor.toLowerCase() !== DEFAULT_BACKGROUND_COLOR && (
-                                <button className="text-[10px] text-gray-400 hover:text-red-500 ml-auto"
-                                    onClick={() => onBackgroundColorChange(DEFAULT_BACKGROUND_COLOR)}>↩</button>
-                            )}
+                        <div className="border-t border-gray-100 pt-2">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-600 whitespace-nowrap">背景色</span>
+                                <input type="color" value={backgroundColor}
+                                    onChange={(e) => onBackgroundColorChange(e.target.value)}
+                                    className="w-7 h-7 shrink-0 rounded border border-gray-200 cursor-pointer p-0" />
+                                <div className="flex items-center flex-1 min-w-0 border border-gray-200 rounded bg-white px-1.5">
+                                    <span className="text-[11px] text-gray-400 shrink-0">#</span>
+                                    <input type="text" value={bgHexInput} placeholder="ffffff"
+                                        maxLength={7} spellCheck={false} autoComplete="off"
+                                        onChange={(e) => {
+                                            setBgHexInput(e.target.value.replace(/^#/, ''));
+                                            const hex = normalizeHexColor(e.target.value);
+                                            if (hex) onBackgroundColorChange(hex);
+                                        }}
+                                        // 途中まで打った不正な値は、欄を離れたら現在の色に戻す
+                                        onBlur={() => setBgHexInput(backgroundColor.replace(/^#/, ''))}
+                                        className="w-full min-w-0 px-1 py-1 text-[11px] text-gray-900 bg-transparent outline-none" />
+                                </div>
+                                {backgroundColor.toLowerCase() !== DEFAULT_BACKGROUND_COLOR && (
+                                    <button className="text-[10px] text-gray-400 hover:text-red-500 shrink-0"
+                                        onClick={() => onBackgroundColorChange(DEFAULT_BACKGROUND_COLOR)}>↩</button>
+                                )}
+                            </div>
+                            <p className="text-[10px] text-gray-400 mt-1">
+                                図面の地色（出力にも反映）。fabd5f のように直接入力できます。
+                            </p>
                         </div>
 
                         <div className="border-t border-gray-100 pt-2">
