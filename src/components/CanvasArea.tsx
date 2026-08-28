@@ -5,6 +5,7 @@ import { Stage, Layer, Line, Rect, Group, Image as KonvaImage, Transformer } fro
 import BoothUnit, { resolveBoothColors } from './BoothUnit';
 import ObstacleComponent from './ObstacleComponent';
 import TextLabelComponent from './TextLabelComponent';
+import NumberField from './NumberField';
 import {
     Booth,
     Obstacle,
@@ -27,6 +28,9 @@ import {
 import { alignBooths, distributeBooths, arrangeInLine, type AlignKind, type Axis } from '@/utils/align';
 
 const GRID_SIZE = 40;
+/** 障害物の最小サイズ (mm) */
+const MIN_OBSTACLE_MM = 10;
+
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 5;
 
@@ -732,6 +736,26 @@ export default function CanvasArea({
         onObstaclesChange(obstacles.map(obs => obs.id === updatedObstacle.id ? updatedObstacle : obs));
     };
 
+    const selectedObstacle = obstacles.find(o => o.id === selectedObstacleId) ?? null;
+
+    /** 障害物の実寸 (mm)。内部はマス単位で持つので端数もそのまま扱える */
+    const getObstacleSizeMm = (obs: Obstacle) => ({
+        width:  Math.round(obs.width  * dims.gridUnitMm),
+        height: Math.round(obs.height * dims.gridUnitMm),
+    });
+
+    /** mm 指定で障害物のサイズを更新する（マス目の倍数でなくてよい） */
+    const updateObstacleSizeMm = (obs: Obstacle, widthMm: number, heightMm: number) => {
+        handleObstacleChange({
+            ...obs,
+            width:  Math.max(MIN_OBSTACLE_MM, widthMm)  / dims.gridUnitMm,
+            height: Math.max(MIN_OBSTACLE_MM, heightMm) / dims.gridUnitMm,
+        });
+    };
+
+    /** マス表示用: 2.67 のような端数を読みやすく丸める */
+    const formatGrid = (n: number) => String(Math.round(n * 100) / 100);
+
     // --- Mouse / Touch Handlers for Stage ---
     const getGridPos = (stageX: number, stageY: number) => ({
         gx: Math.floor((stageX - stagePos.x) / (stageScale * GRID_SIZE)),
@@ -1424,12 +1448,12 @@ export default function CanvasArea({
                                 </div>
                                 <div className="flex items-center gap-1">
                                     <label className="text-[10px] text-gray-500">W</label>
-                                    <input type="number" min={10} step={10} value={obstacleDimW}
-                                        onChange={(e) => setObstacleDimW(Number(e.target.value))}
+                                    <NumberField min={MIN_OBSTACLE_MM} step={10} value={obstacleDimW}
+                                        onCommit={(n) => setObstacleDimW(Math.max(MIN_OBSTACLE_MM, Math.round(n)))}
                                         className="w-16 border rounded px-1 py-1 text-xs text-gray-800" />
                                     <label className="text-[10px] text-gray-500">H</label>
-                                    <input type="number" min={10} step={10} value={obstacleDimH}
-                                        onChange={(e) => setObstacleDimH(Number(e.target.value))}
+                                    <NumberField min={MIN_OBSTACLE_MM} step={10} value={obstacleDimH}
+                                        onCommit={(n) => setObstacleDimH(Math.max(MIN_OBSTACLE_MM, Math.round(n)))}
                                         className="w-16 border rounded px-1 py-1 text-xs text-gray-800" />
                                     <span className="text-[10px] text-gray-400">mm</span>
                                 </div>
@@ -1440,8 +1464,9 @@ export default function CanvasArea({
                                         onObstaclesChange([...obstacles, {
                                             id: `obs-${Date.now()}`,
                                             x: center.x, y: center.y,
-                                            width:  Math.max(1, Math.round(obstacleDimW / dims.gridUnitMm)),
-                                            height: Math.max(1, Math.round(obstacleDimH / dims.gridUnitMm)),
+                                            // 指定した mm をそのまま使う（マス目の倍数に丸めない）
+                                            width:  Math.max(MIN_OBSTACLE_MM, obstacleDimW) / dims.gridUnitMm,
+                                            height: Math.max(MIN_OBSTACLE_MM, obstacleDimH) / dims.gridUnitMm,
                                             rotation: 0,
                                             type: activeTool === 'wall' ? 'wall' : 'column',
                                             color: obstacleColor,
@@ -1738,6 +1763,64 @@ export default function CanvasArea({
                                 </div>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* ── 選択中の障害物パネル（会場編集モード） ────────────────── */}
+            {selectedObstacle && mode === 'venue' && activeTool === 'none' && !isBgEditing && (
+                <div className={panelClass}>
+                    <div className="flex justify-between items-center mb-2 border-b pb-2">
+                        <h3 className="font-bold text-gray-900">
+                            {selectedObstacle.type === 'wall' ? '壁' : selectedObstacle.type === 'column' ? '柱' : 'エリア'}のサイズ
+                        </h3>
+                        <button onClick={() => setSelectedObstacleId(null)}
+                            className="w-8 h-8 shrink-0 text-gray-400 active:text-gray-700">✕</button>
+                    </div>
+
+                    <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="text-xs text-gray-700 block mb-1">幅 (mm)</label>
+                                <NumberField min={MIN_OBSTACLE_MM} step={10}
+                                    value={getObstacleSizeMm(selectedObstacle).width}
+                                    onCommit={(n) => updateObstacleSizeMm(
+                                        selectedObstacle, n, getObstacleSizeMm(selectedObstacle).height)}
+                                    className="w-full border rounded px-2 py-2 text-sm text-gray-900 bg-white" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-700 block mb-1">高さ (mm)</label>
+                                <NumberField min={MIN_OBSTACLE_MM} step={10}
+                                    value={getObstacleSizeMm(selectedObstacle).height}
+                                    onCommit={(n) => updateObstacleSizeMm(
+                                        selectedObstacle, getObstacleSizeMm(selectedObstacle).width, n)}
+                                    className="w-full border rounded px-2 py-2 text-sm text-gray-900 bg-white" />
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={() => handleObstacleChange({
+                                ...selectedObstacle,
+                                width:  Math.max(1, Math.round(selectedObstacle.width)),
+                                height: Math.max(1, Math.round(selectedObstacle.height)),
+                            })}
+                            className="w-full py-2.5 bg-gray-50 active:bg-gray-100 text-gray-600 rounded-lg text-xs font-medium">
+                            マス目に合わせる
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                onObstaclesChange(obstacles.filter(o => o.id !== selectedObstacle.id));
+                                setSelectedObstacleId(null);
+                            }}
+                            className="w-full py-2.5 bg-red-50 active:bg-red-100 text-red-700 rounded-lg text-sm font-medium">
+                            🗑 削除
+                        </button>
+
+                        <p className="text-[11px] text-gray-500">
+                            {formatGrid(selectedObstacle.width)}×{formatGrid(selectedObstacle.height)}マス
+                            （1マス {dims.gridUnitMm}mm）。ハンドルでのリサイズはマス目に丸められます。
+                        </p>
                     </div>
                 </div>
             )}
