@@ -15,9 +15,11 @@ import {
   fetchSheet,
   guessMapping,
   buildBooths,
+  mergeBooths,
   MAPPING_FIELDS,
   UNUSED_COLUMN,
   type ColumnMapping,
+  type ImportMode,
   type SheetData,
 } from '@/utils/csvParser';
 import { autoLayout } from '@/utils/layoutAlgorithm';
@@ -113,6 +115,8 @@ export default function Home() {
   // スプレッドシート取り込み（列の対応づけダイアログ用）
   const [sheetData, setSheetData] = useState<SheetData | null>(null);
   const [mapping, setMapping]     = useState<ColumnMapping | null>(null);
+  const [importMode, setImportMode]       = useState<ImportMode>('merge');
+  const [removeMissing, setRemoveMissing] = useState(true);
 
   // ─── Undo / Redo ─────────────────────────────────────────────────────────
   const historyRef = useRef<Snapshot[]>([]);
@@ -370,6 +374,10 @@ export default function Home() {
   };
 
   const importPreview = sheetData && mapping ? buildBooths(sheetData.rows, mapping) : [];
+  // 差分マージの結果はプレビューと取り込みの両方で使う
+  const mergePreview = sheetData && mapping && importMode === 'merge'
+    ? mergeBooths(booths, importPreview, { removeMissing })
+    : null;
 
   const handleImportSheet = () => {
     if (!sheetData || !mapping) return;
@@ -379,13 +387,26 @@ export default function Home() {
       return;
     }
     snapshot();
-    // 位置は決めず、すべて「未配置」としてトレイに入れる。
-    // 並べるのは「自動配置」かトレイからのタップで行う。
-    setBooths(imported);
+    if (importMode === 'merge') {
+      // 既存の配置を保ったまま、シートの内容で更新・追加する
+      const result = mergeBooths(booths, imported, { removeMissing });
+      setBooths(result.booths);
+      const parts = [`更新 ${result.updated}件`, `追加 ${result.added}件`];
+      if (result.removed) parts.push(`削除 ${result.removed}件`);
+      if (result.kept)    parts.push(`シートに無い ${result.kept}件は据え置き`);
+      setNotice(
+        `${parts.join(' / ')}。配置済みのブースはそのままです。`
+        + (result.added > 0 ? ' 追加分は未配置トレイにあります。' : ''),
+      );
+    } else {
+      // 位置は決めず、すべて「未配置」としてトレイに入れる。
+      // 並べるのは「自動配置」かトレイからのタップで行う。
+      setBooths(imported);
+      setNotice(`${imported.length}件を読み込みました。「自動配置」か未配置トレイから配置してください。`);
+    }
     setSheetData(null);
     setMapping(null);
     setIsPanelOpen(false);
-    setNotice(`${imported.length}件を読み込みました。「自動配置」か未配置トレイから配置してください。`);
   };
 
   // ─── 自動配置 ─────────────────────────────────────────────────────────────
@@ -683,11 +704,50 @@ export default function Home() {
                 </div>
               ))}
 
+              {/* 取り込み方法 */}
+              <div className="border-t border-gray-200 pt-2.5">
+                <p className="text-xs font-semibold text-gray-600 mb-1.5">取り込み方法</p>
+                <div className="space-y-1.5">
+                  {([
+                    { value: 'merge',   label: '配置を保って更新',   hint: '座席番号（無ければ出展者名）で照合し、配置済みの位置はそのまま。新しい行だけ未配置で追加します。' },
+                    { value: 'replace', label: 'すべて置き換える', hint: '現在のブースを破棄してシートの内容だけにします。配置は全部やり直しです。' },
+                  ] as const).map(opt => (
+                    <label key={opt.value}
+                      className={`flex gap-2 items-start border rounded p-2 cursor-pointer ${
+                        importMode === opt.value ? 'border-green-600 bg-green-50' : 'border-gray-200'}`}>
+                      <input type="radio" name="import-mode" className="mt-0.5 shrink-0"
+                        checked={importMode === opt.value}
+                        onChange={() => setImportMode(opt.value)} />
+                      <span className="min-w-0">
+                        <span className="text-xs font-medium text-gray-800 block">{opt.label}</span>
+                        <span className="text-[10px] text-gray-500 block leading-tight">{opt.hint}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {importMode === 'merge' && (
+                  <label className="flex gap-2 items-center mt-1.5 pl-1">
+                    <input type="checkbox" checked={removeMissing}
+                      onChange={(e) => setRemoveMissing(e.target.checked)} />
+                    <span className="text-[11px] text-gray-600">
+                      シートに無いブースを削除する（外すとそのまま残ります）
+                    </span>
+                  </label>
+                )}
+              </div>
+
               {/* プレビュー */}
               <div className="border-t border-gray-200 pt-2.5">
                 <p className="text-xs font-semibold text-gray-600 mb-1">
                   取り込みプレビュー（{importPreview.length}件）
                 </p>
+                {mergePreview && importPreview.length > 0 && (
+                  <p className="text-[11px] text-gray-600 mb-1">
+                    更新 {mergePreview.updated}件 / 追加 {mergePreview.added}件
+                    {mergePreview.removed > 0 && ` / 削除 ${mergePreview.removed}件`}
+                    {mergePreview.kept > 0 && ` / 据え置き ${mergePreview.kept}件`}
+                  </p>
+                )}
                 {importPreview.length === 0 ? (
                   <p className="text-xs text-red-600">
                     取り込める行がありません。「出展者名」か「座席番号」の列を指定してください。
@@ -697,6 +757,7 @@ export default function Home() {
                     <table className="text-[11px] w-full">
                       <thead className="bg-gray-50 text-gray-500">
                         <tr>
+                          {mergePreview && <th className="px-2 py-1 text-left font-medium">状態</th>}
                           <th className="px-2 py-1 text-left font-medium">座席</th>
                           <th className="px-2 py-1 text-left font-medium">出展者</th>
                           <th className="px-2 py-1 text-left font-medium">サイズ</th>
@@ -705,8 +766,14 @@ export default function Home() {
                         </tr>
                       </thead>
                       <tbody className="text-gray-800">
-                        {importPreview.slice(0, 4).map(b => (
+                        {importPreview.slice(0, 4).map((b, i) => (
                           <tr key={b.id} className="border-t border-gray-100">
+                            {mergePreview && (
+                              <td className={`px-2 py-1 whitespace-nowrap ${
+                                mergePreview.status[i] === 'added' ? 'text-green-700' : 'text-gray-500'}`}>
+                                {mergePreview.status[i] === 'added' ? '追加' : '更新'}
+                              </td>
+                            )}
                             <td className="px-2 py-1 whitespace-nowrap">{b.seatNumber ?? '—'}</td>
                             <td className="px-2 py-1 max-w-[10rem] truncate">{b.name}</td>
                             <td className="px-2 py-1 whitespace-nowrap">
@@ -726,7 +793,7 @@ export default function Home() {
             <div className="px-4 py-3 border-t border-gray-200 flex gap-2 shrink-0">
               <button onClick={handleImportSheet} disabled={importPreview.length === 0}
                 className="flex-1 h-11 bg-green-600 text-white rounded active:bg-green-700 disabled:bg-gray-300 text-sm font-bold">
-                {importPreview.length}件を取り込む
+                {importPreview.length}件を{mergePreview ? '反映' : '取り込む'}
               </button>
               <button onClick={() => { setSheetData(null); setMapping(null); }}
                 className="h-11 px-4 text-sm text-gray-600 border border-gray-300 rounded active:bg-gray-100">
@@ -734,7 +801,9 @@ export default function Home() {
               </button>
             </div>
             <p className="px-4 pb-3 text-[11px] text-gray-500 shrink-0">
-              ※ 取り込むと現在のブースは置き換わります
+              {importMode === 'merge'
+                ? '※ 配置済みのブースの位置と色はそのまま残ります'
+                : '※ 取り込むと現在のブースは置き換わります'}
             </p>
           </div>
         </div>

@@ -243,3 +243,131 @@ export const buildBooths = (rows: string[][], mapping: ColumnMapping): Booth[] =
         })
         .filter((b): b is Booth => b !== null);
 };
+
+/** 取り込み方法。merge = 配置を保って差分更新、replace = 全置き換え */
+export type ImportMode = 'merge' | 'replace';
+
+export interface MergeOptions {
+    /** シートに無くなった既存ブースを削除する */
+    removeMissing?: boolean;
+}
+
+/** 取り込み行ごとの扱い（プレビュー表示用） */
+export type RowStatus = 'updated' | 'added';
+
+export interface MergeResult {
+    booths: Booth[];
+    /** 既存ブースと一致し、配置を保ったまま内容を更新した件数 */
+    updated: number;
+    /** 既存に無く、未配置として追加した件数 */
+    added: number;
+    /** シートに無いため削除した既存ブースの件数 */
+    removed: number;
+    /** シートに無いがそのまま残した既存ブースの件数 */
+    kept: number;
+    /** imported と同じ並びの、行ごとの扱い */
+    status: RowStatus[];
+}
+
+/**
+ * 照合キー。全角英数を半角に、ハイフン類とスペースを揃えてから比較する。
+ * 「Ａ-01」「a－01」「A 01」を同じ席として扱うため。
+ */
+const matchKey = (raw?: string): string =>
+    normalize(raw ?? '')
+        .replace(/[Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+        .replace(/[-‐‑–—ー－_]/g, '-')
+        .replace(/\s/g, '')
+        .toLowerCase();
+
+/** 既存 id と衝突しない id を作る */
+const uniqueId = (used: Set<string>, base: string): string => {
+    let id = base;
+    let n = 2;
+    while (used.has(id)) id = `${base}-${n++}`;
+    used.add(id);
+    return id;
+};
+
+/**
+ * 既存のブースにシートの内容をマージする。
+ * 座席番号 → 出展者名の順で既存ブースと突き合わせ、一致したものは
+ * 配置（座標・向き・配置済みフラグ）と個別に設定した色を維持したまま、
+ * シート由来の項目（名前・座席番号・サイズ・カテゴリ・壁側希望）だけを更新する。
+ * 一致しなかったシート行は未配置のブースとして追加する。
+ */
+export const mergeBooths = (
+    existing: Booth[],
+    imported: Booth[],
+    opts: MergeOptions = {},
+): MergeResult => {
+    type Slot = { booth: Booth; used: boolean };
+    const slots: Slot[] = existing.map(booth => ({ booth, used: false }));
+
+    const buildIndex = (key: (b: Booth) => string) => {
+        const map = new Map<string, Slot[]>();
+        for (const slot of slots) {
+            const k = key(slot.booth);
+            if (!k) continue;
+            const list = map.get(k);
+            if (list) list.push(slot);
+            else map.set(k, [slot]);
+        }
+        return map;
+    };
+    const seatIndex = buildIndex(b => matchKey(b.seatNumber));
+    const nameIndex = buildIndex(b => matchKey(b.name));
+
+    const claim = (map: Map<string, Slot[]>, k: string): Slot | undefined => {
+        if (!k) return undefined;
+        const slot = map.get(k)?.find(s => !s.used);
+        if (slot) slot.used = true;
+        return slot;
+    };
+
+    // 座席番号での照合を先に済ませる。名前だけの行に席を横取りされないため。
+    const matched: (Booth | undefined)[] = imported.map(row => claim(seatIndex, matchKey(row.seatNumber))?.booth);
+    imported.forEach((row, i) => {
+        if (!matched[i]) matched[i] = claim(nameIndex, matchKey(row.name))?.booth;
+    });
+
+    const leftovers = slots.filter(s => !s.used).map(s => s.booth);
+    const removeMissing = opts.removeMissing ?? false;
+
+    const usedIds = new Set<string>(
+        [...matched.filter((b): b is Booth => !!b), ...(removeMissing ? [] : leftovers)].map(b => b.id),
+    );
+
+    const status: RowStatus[] = [];
+    const merged = imported.map((row, i) => {
+        const prev = matched[i];
+        if (!prev) {
+            status.push('added');
+            return { ...row, id: uniqueId(usedIds, row.id) };
+        }
+        status.push('updated');
+        return {
+            ...row,
+            id: prev.id,
+            // 配置と見た目は既存のものを引き継ぐ
+            x: prev.x,
+            y: prev.y,
+            rotation: prev.rotation,
+            isPlaced: prev.isPlaced,
+            color: prev.color,
+            strokeColor: prev.strokeColor,
+            fillColor: prev.fillColor,
+            textColor: prev.textColor,
+            preferences: { ...prev.preferences, wall: row.preferences.wall },
+        };
+    });
+
+    return {
+        booths: removeMissing ? merged : [...merged, ...leftovers],
+        updated: matched.filter(Boolean).length,
+        added: merged.length - matched.filter(Boolean).length,
+        removed: removeMissing ? leftovers.length : 0,
+        kept: removeMissing ? 0 : leftovers.length,
+        status,
+    };
+};
