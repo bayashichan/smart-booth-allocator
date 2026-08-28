@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Group, Rect, Text } from 'react-konva';
-import { Booth, VendorCategory, DimensionSettings } from '@/types/layout';
+import { Booth, VendorCategory, DimensionSettings, CategoryColorMap, CategoryColors } from '@/types/layout';
 import { getBoothSizeMm, getBoothRectOffset } from '@/utils/boothGeometry';
 
 interface BoothUnitProps {
@@ -12,7 +12,7 @@ interface BoothUnitProps {
     fontSize?: number;
     isSelected?: boolean;
     isColliding?: boolean;
-    categoryColors?: Record<string, { stroke: string; fill: string }>;
+    categoryColors?: CategoryColorMap;
     onDragStart?: (e: any) => void;
     onDragMove?:  (e: any) => void;
     onDragEnd?:      (e: any) => void;
@@ -21,7 +21,7 @@ interface BoothUnitProps {
     draggable?: boolean;
 }
 
-export const DEFAULT_CATEGORY_COLORS: Record<VendorCategory, { stroke: string; fill: string }> = {
+export const DEFAULT_CATEGORY_COLORS: Record<VendorCategory, CategoryColors> = {
     '占い・スピリチュアル': { stroke: '#7c3aed', fill: '#ede9fe' },
     '物販':                 { stroke: '#0284c7', fill: '#e0f2fe' },
     'ボディケア・美容':     { stroke: '#db2777', fill: '#fce7f3' },
@@ -33,8 +33,8 @@ export const DEFAULT_CATEGORY_COLORS: Record<VendorCategory, { stroke: string; f
 /** カテゴリの表示色を解決する（凡例・SVG エクスポートからも使う） */
 export const resolveCategoryColors = (
     category: string,
-    categoryColors: Record<string, { stroke: string; fill: string }> = {},
-) =>
+    categoryColors: CategoryColorMap = {},
+): CategoryColors =>
     categoryColors[category] ??
     DEFAULT_CATEGORY_COLORS[category as VendorCategory] ??
     DEFAULT_CATEGORY_COLORS['その他'];
@@ -42,13 +42,14 @@ export const resolveCategoryColors = (
 /** ブースの表示色を解決する（SVG エクスポートからも使う） */
 export const resolveBoothColors = (
     booth: Booth,
-    categoryColors: Record<string, { stroke: string; fill: string }> = {},
+    categoryColors: CategoryColorMap = {},
 ) => {
     const base = resolveCategoryColors(booth.category, categoryColors);
     return {
         stroke: booth.strokeColor ?? booth.color ?? base.stroke,
         fill:   booth.fillColor   ?? (booth.color ? booth.color + '22' : base.fill),
-        text:   booth.textColor   ?? booth.strokeColor ?? booth.color ?? base.stroke,
+        // カテゴリに文字色の指定があればそれを使い、無ければ枠線色に合わせる
+        text:   booth.textColor   ?? base.text ?? booth.strokeColor ?? booth.color ?? base.stroke,
     };
 };
 

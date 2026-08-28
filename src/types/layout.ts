@@ -96,7 +96,14 @@ export const DEFAULT_DIMENSIONS: DimensionSettings = {
   baseTableDepthMm: 900,
 };
 
-export type CategoryColorMap = Record<string, { stroke: string; fill: string }>;
+export type CategoryColors = {
+  stroke: string;
+  fill: string;
+  /** 未指定なら枠線色を文字色に使う */
+  text?: string;
+};
+
+export type CategoryColorMap = Record<string, CategoryColors>;
 
 /** 図面の背景色（会場の地色。エクスポートの下地にも使う） */
 export const DEFAULT_BACKGROUND_COLOR = '#ffffff';
@@ -110,6 +117,8 @@ export interface LegendConfig {
   x: number;        // ピクセル座標（テキストラベルと同じ座標系）
   y: number;
   fontSize: number;
+  /** 枠ごと拡大・縮小する倍率 */
+  scale: number;
   title: string;    // 空文字なら見出しを描かない
 }
 
@@ -118,6 +127,7 @@ export const DEFAULT_LEGEND: LegendConfig = {
   x: 0,
   y: 0,
   fontSize: 16,
+  scale: 1,
   title: 'カテゴリ',
 };
 

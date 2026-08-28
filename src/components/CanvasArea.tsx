@@ -85,9 +85,6 @@ const CATEGORY_PRESETS: { key: VendorCategory; def: string }[] = [
     { key: 'その他',               def: '#6b7280' },
 ];
 
-const LEGEND_PAD = 14;
-/** 色見本と文字の間隔 */
-const LEGEND_GAP = 10;
 
 /**
  * 文字幅のおおよその見積り。全角は 1em、半角は 0.56em として計算する。
@@ -98,20 +95,29 @@ const measureTextWidth = (text: string, fontSize: number) =>
 
 type LegendItem = { key: string; stroke: string; fill: string };
 
-/** 凡例の枠サイズと行の高さ。描画と出力範囲の計算で共有する。 */
+/**
+ * 凡例の枠サイズと行の高さ。描画と出力範囲の計算で共有する。
+ * 余白・色見本・行の高さはすべて文字サイズに比例させ、
+ * 文字サイズだけで枠ごと拡大縮小できるようにしている。
+ */
 const getLegendLayout = (items: LegendItem[], legend: LegendConfig) => {
     const fs      = legend.fontSize;
+    const pad     = Math.round(fs * 0.9);
+    const gap     = Math.round(fs * 0.6);
     const swatch  = Math.round(fs * 1.25);
     const rowH    = Math.round(fs * 1.7);
     const titleH  = legend.title ? Math.round(fs * 2) : 0;
     const textW   = items.reduce((m, it) => Math.max(m, measureTextWidth(it.key, fs)), 0);
     const titleW  = legend.title ? measureTextWidth(legend.title, fs * 1.05) : 0;
     return {
-        fs, swatch, rowH, titleH,
-        width:  Math.max(LEGEND_PAD * 2 + swatch + LEGEND_GAP + textW, LEGEND_PAD * 2 + titleW),
-        height: LEGEND_PAD * 2 + titleH + items.length * rowH,
+        fs, pad, gap, swatch, rowH, titleH,
+        width:  Math.max(pad * 2 + swatch + gap + textW, pad * 2 + titleW),
+        height: pad * 2 + titleH + items.length * rowH,
     };
 };
+
+/** 凡例の倍率の許容範囲 */
+const clampLegendScale = (n: number) => Math.min(5, Math.max(0.2, Math.round(n * 100) / 100));
 
 const escapeXml = (s: string) =>
     String(s).replace(/[<>&'"]/g, (c) =>
@@ -287,7 +293,10 @@ export default function CanvasArea({
             include(o.x * GRID_SIZE, o.y * GRID_SIZE, o.width * GRID_SIZE, o.height * GRID_SIZE));
         textLabels.forEach(l =>
             include(l.x, l.y, Math.max(40, l.text.length * l.fontSize * 0.7), l.fontSize * 1.4));
-        if (isLegendShown) include(legend.x, legend.y, legendLayout.width, legendLayout.height);
+        if (isLegendShown) {
+            include(legend.x, legend.y,
+                legendLayout.width * legend.scale, legendLayout.height * legend.scale);
+        }
 
         const pad = GRID_SIZE;
         return {
@@ -297,7 +306,7 @@ export default function CanvasArea({
             height: Math.max(GRID_SIZE, maxY - minY + pad * 2),
         };
     }, [placedBooths, obstacles, textLabels, dims, venueCols, venueRows,
-        isLegendShown, legend.x, legend.y, legendLayout.width, legendLayout.height]);
+        isLegendShown, legend.x, legend.y, legend.scale, legendLayout.width, legendLayout.height]);
 
     /** 全体が画面に収まるようズーム・位置を調整 */
     const fitToView = useCallback(() => {
@@ -448,13 +457,13 @@ export default function CanvasArea({
         const venueSvg = `<rect x="0" y="0" width="${venueCols * GRID_SIZE}" height="${venueRows * GRID_SIZE}" fill="none" stroke="#334155" stroke-width="3" />`;
 
         const L = legendLayout;
-        const legendSvg = !isLegendShown ? '' : `<g transform="translate(${legend.x}, ${legend.y})">
-            <rect x="0" y="0" width="${L.width}" height="${L.height}" rx="8" fill="#ffffff" fill-opacity="0.93" stroke="#94a3b8" stroke-width="1.5" />
-            ${legend.title ? `<text x="${LEGEND_PAD}" y="${LEGEND_PAD + L.titleH / 2}" font-family="sans-serif" font-size="${L.fs * 1.05}px" font-weight="bold" fill="#334155" dominant-baseline="central">${escapeXml(legend.title)}</text>` : ''}
+        const legendSvg = !isLegendShown ? '' : `<g transform="translate(${legend.x}, ${legend.y}) scale(${legend.scale})">
+            <rect x="0" y="0" width="${L.width}" height="${L.height}" rx="${Math.round(L.fs / 2)}" fill="#ffffff" fill-opacity="0.93" stroke="#94a3b8" stroke-width="1.5" />
+            ${legend.title ? `<text x="${L.pad}" y="${L.pad + L.titleH / 2}" font-family="sans-serif" font-size="${L.fs * 1.05}px" font-weight="bold" fill="#334155" dominant-baseline="central">${escapeXml(legend.title)}</text>` : ''}
             ${legendItems.map((it, i) => {
-                const rowY = LEGEND_PAD + L.titleH + i * L.rowH;
-                return `<rect x="${LEGEND_PAD}" y="${rowY + (L.rowH - L.swatch) / 2}" width="${L.swatch}" height="${L.swatch}" rx="3" fill="${it.fill}" stroke="${it.stroke}" stroke-width="2" />
-            <text x="${LEGEND_PAD + L.swatch + LEGEND_GAP}" y="${rowY + L.rowH / 2}" font-family="sans-serif" font-size="${L.fs}px" fill="#334155" dominant-baseline="central">${escapeXml(it.key)}</text>`;
+                const rowY = L.pad + L.titleH + i * L.rowH;
+                return `<rect x="${L.pad}" y="${rowY + (L.rowH - L.swatch) / 2}" width="${L.swatch}" height="${L.swatch}" rx="3" fill="${it.fill}" stroke="${it.stroke}" stroke-width="2" />
+            <text x="${L.pad + L.swatch + L.gap}" y="${rowY + L.rowH / 2}" font-family="sans-serif" font-size="${L.fs}px" fill="#334155" dominant-baseline="central">${escapeXml(it.key)}</text>`;
             }).join('\n')}
         </g>`;
 
@@ -1448,7 +1457,7 @@ export default function CanvasArea({
                 )}
 
                 {mode === 'booth' && isSettingsOpen && (
-                    <div className="bg-white/97 backdrop-blur shadow-xl rounded-xl p-3 border border-gray-200 flex flex-col gap-3 w-72 max-w-[calc(100vw-1.5rem)] max-h-[55vh] overflow-y-auto">
+                    <div className="bg-white/97 backdrop-blur shadow-xl rounded-xl p-3 border border-gray-200 flex flex-col gap-3 w-80 max-w-[calc(100vw-1.5rem)] max-h-[55vh] overflow-y-auto">
                         <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-600 whitespace-nowrap">文字サイズ</span>
                             <input type="range" min={8} max={40} step={1} value={Math.min(40, seatFontSize)}
@@ -1492,11 +1501,11 @@ export default function CanvasArea({
                         <div className="border-t border-gray-100 pt-2">
                             <p className="text-[11px] font-semibold text-gray-500 mb-1">カテゴリカラー</p>
                             <p className="text-[10px] text-gray-400 mb-2">
-                                枠線と背景（塗り）を別々に指定できます。個別に色を変えたブースはそちらが優先されます。
+                                枠線・背景（塗り）・文字を別々に指定できます。個別に色を変えたブースはそちらが優先されます。
                             </p>
                             {CATEGORY_PRESETS.map(({ key }) => {
                                 const c = resolveCategoryColors(key, categoryColors);
-                                const setColor = (patch: Partial<{ stroke: string; fill: string }>) =>
+                                const setColor = (patch: Partial<{ stroke: string; fill: string; text: string }>) =>
                                     onCategoryColorsChange({ ...categoryColors, [key]: { ...c, ...patch } });
                                 return (
                                     <div key={key} className="mb-2">
@@ -1512,11 +1521,13 @@ export default function CanvasArea({
                                                     }}>↩</button>
                                             )}
                                         </div>
-                                        <div className="flex gap-1.5 mt-0.5">
-                                            <ColorField className="flex-1 min-w-0" label="枠線" value={c.stroke}
+                                        <div className="grid grid-cols-3 gap-1.5 mt-0.5">
+                                            <ColorField className="min-w-0" label="枠線" value={c.stroke}
                                                 onChange={(hex) => setColor({ stroke: hex })} />
-                                            <ColorField className="flex-1 min-w-0" label="背景" value={c.fill}
+                                            <ColorField className="min-w-0" label="背景" value={c.fill}
                                                 onChange={(hex) => setColor({ fill: hex })} />
+                                            <ColorField className="min-w-0" label="文字" value={c.text ?? c.stroke}
+                                                onChange={(hex) => setColor({ text: hex })} />
                                         </div>
                                     </div>
                                 );
@@ -1539,13 +1550,27 @@ export default function CanvasArea({
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <span className="text-[11px] text-gray-600 w-10 shrink-0">文字</span>
-                                        <input type="range" min={10} max={32} step={1} value={legend.fontSize}
+                                        <input type="range" min={8} max={48} step={1} value={Math.min(48, legend.fontSize)}
                                             onChange={(e) => onLegendChange({ ...legend, fontSize: Number(e.target.value) }, { coalesceKey: 'legend-font' })}
-                                            className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
-                                        <span className="text-[11px] font-bold text-gray-700 w-5 text-right">{legend.fontSize}</span>
+                                            className="flex-1 min-w-0 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
+                                        <NumberField value={legend.fontSize} min={4} max={200} step={1}
+                                            onCommit={(n) => onLegendChange({ ...legend, fontSize: clampFontSize(n) }, { coalesceKey: 'legend-font' })}
+                                            aria-label="凡例の文字サイズ"
+                                            className="w-12 shrink-0 border border-gray-200 rounded px-1 py-1 text-[11px] text-right text-gray-900 bg-white" />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[11px] text-gray-600 w-10 shrink-0">倍率</span>
+                                        <input type="range" min={20} max={300} step={5} value={Math.min(300, Math.round(legend.scale * 100))}
+                                            onChange={(e) => onLegendChange({ ...legend, scale: Number(e.target.value) / 100 }, { coalesceKey: 'legend-scale' })}
+                                            className="flex-1 min-w-0 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
+                                        <NumberField value={Math.round(legend.scale * 100)} min={20} max={500} step={5}
+                                            onCommit={(n) => onLegendChange({ ...legend, scale: clampLegendScale(n / 100) }, { coalesceKey: 'legend-scale' })}
+                                            aria-label="凡例の倍率(%)"
+                                            className="w-12 shrink-0 border border-gray-200 rounded px-1 py-1 text-[11px] text-right text-gray-900 bg-white" />
                                     </div>
                                     <p className="text-[10px] text-gray-400">
-                                        図面上でドラッグして移動できます。載るのは配置済みブースのカテゴリだけです。
+                                        図面上でドラッグして移動できます。枠の大きさは文字サイズと倍率で決まります。
+                                        載るのは配置済みブースのカテゴリだけです。
                                     </p>
                                 </div>
                             )}
@@ -2244,6 +2269,7 @@ export default function CanvasArea({
                         {isLegendShown && (
                             <Group
                                 x={legend.x} y={legend.y}
+                                scaleX={legend.scale} scaleY={legend.scale}
                                 draggable={!isSpacePanning && activeTool === 'none'}
                                 onDragEnd={(e) => onLegendChange({ ...legend, x: Math.round(e.target.x()), y: Math.round(e.target.y()) })}
                             >
@@ -2251,31 +2277,31 @@ export default function CanvasArea({
                                     描画になり、ステージがまだ 0×0 の初回描画で落ちるため切っておく */}
                                 <Rect
                                     width={legendLayout.width} height={legendLayout.height}
-                                    fill="rgba(255,255,255,0.93)" cornerRadius={8}
+                                    fill="rgba(255,255,255,0.93)" cornerRadius={Math.round(legendLayout.fs / 2)}
                                     stroke="#94a3b8" strokeWidth={1.5}
                                     shadowColor="#0f172a" shadowOpacity={0.15} shadowBlur={8} shadowOffsetY={2}
                                     perfectDrawEnabled={false}
                                 />
                                 {legend.title && (
                                     <Text
-                                        x={LEGEND_PAD} y={LEGEND_PAD}
+                                        x={legendLayout.pad} y={legendLayout.pad}
                                         height={legendLayout.titleH} verticalAlign="middle"
                                         text={legend.title} fontSize={legendLayout.fs * 1.05}
                                         fontStyle="bold" fill="#334155" listening={false}
                                     />
                                 )}
                                 {legendItems.map((it, i) => {
-                                    const rowY = LEGEND_PAD + legendLayout.titleH + i * legendLayout.rowH;
+                                    const rowY = legendLayout.pad + legendLayout.titleH + i * legendLayout.rowH;
                                     return (
                                         <React.Fragment key={it.key}>
                                             <Rect
-                                                x={LEGEND_PAD} y={rowY + (legendLayout.rowH - legendLayout.swatch) / 2}
+                                                x={legendLayout.pad} y={rowY + (legendLayout.rowH - legendLayout.swatch) / 2}
                                                 width={legendLayout.swatch} height={legendLayout.swatch}
                                                 fill={it.fill} stroke={it.stroke} strokeWidth={2} cornerRadius={3}
                                                 listening={false}
                                             />
                                             <Text
-                                                x={LEGEND_PAD + legendLayout.swatch + LEGEND_GAP} y={rowY}
+                                                x={legendLayout.pad + legendLayout.swatch + legendLayout.gap} y={rowY}
                                                 height={legendLayout.rowH} verticalAlign="middle"
                                                 text={it.key} fontSize={legendLayout.fs} fill="#334155"
                                                 listening={false}

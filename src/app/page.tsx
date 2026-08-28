@@ -293,7 +293,12 @@ export default function Home() {
     if (data.categoryColors) setCategoryColors(data.categoryColors);
     // 背景色・凡例は v3 から。古いデータは既定値のままにする。
     setBackgroundColor(data.backgroundColor ?? DEFAULT_BACKGROUND_COLOR);
-    setLegend({ ...DEFAULT_LEGEND, ...(data.legend ?? {}) });
+    const nextLegend = { ...DEFAULT_LEGEND, ...(data.legend ?? {}) };
+    // 倍率が壊れたデータでも凡例が消えないようにする
+    setLegend({
+      ...nextLegend,
+      scale: Number.isFinite(nextLegend.scale) && nextLegend.scale > 0 ? nextLegend.scale : 1,
+    });
     setSeatFontSize(data.boothFontSize ?? DEFAULT_BOOTH_FONT_SIZE);
   }, []);
 
