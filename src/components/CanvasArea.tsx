@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Stage, Layer, Line, Rect, Group, Image as KonvaImage, Transformer } from 'react-konva';
-import BoothUnit, { resolveBoothColors } from './BoothUnit';
+import { Stage, Layer, Line, Rect, Group, Text, Image as KonvaImage, Transformer } from 'react-konva';
+import BoothUnit, { resolveBoothColors, resolveCategoryColors } from './BoothUnit';
 import ObstacleComponent from './ObstacleComponent';
 import TextLabelComponent from './TextLabelComponent';
 import NumberField from './NumberField';
@@ -12,7 +12,9 @@ import {
     TextLabel,
     DimensionSettings,
     CategoryColorMap,
+    LegendConfig,
     VendorCategory,
+    DEFAULT_BACKGROUND_COLOR,
 } from '@/types/layout';
 import {
     getBoothSizeMm,
@@ -55,6 +57,10 @@ interface CanvasAreaProps {
     dims: DimensionSettings;
     categoryColors: CategoryColorMap;
     onCategoryColorsChange: (colors: CategoryColorMap) => void;
+    backgroundColor: string;
+    onBackgroundColorChange: (color: string) => void;
+    legend: LegendConfig;
+    onLegendChange: (legend: LegendConfig, opts?: ChangeOptions) => void;
 }
 
 type ToolType = 'none' | 'wall' | 'column' | 'eraser' | 'text';
@@ -72,6 +78,34 @@ const CATEGORY_PRESETS: { key: VendorCategory; def: string }[] = [
     { key: 'ワークショップ',       def: '#16a34a' },
     { key: 'その他',               def: '#6b7280' },
 ];
+
+const LEGEND_PAD = 14;
+/** 色見本と文字の間隔 */
+const LEGEND_GAP = 10;
+
+/**
+ * 文字幅のおおよその見積り。全角は 1em、半角は 0.56em として計算する。
+ * Konva と SVG の両方で同じ枠サイズを使うための近似。
+ */
+const measureTextWidth = (text: string, fontSize: number) =>
+    [...text].reduce((w, ch) => w + (/[\x00-\xff]/.test(ch) ? 0.56 : 1) * fontSize, 0);
+
+type LegendItem = { key: string; stroke: string; fill: string };
+
+/** 凡例の枠サイズと行の高さ。描画と出力範囲の計算で共有する。 */
+const getLegendLayout = (items: LegendItem[], legend: LegendConfig) => {
+    const fs      = legend.fontSize;
+    const swatch  = Math.round(fs * 1.25);
+    const rowH    = Math.round(fs * 1.7);
+    const titleH  = legend.title ? Math.round(fs * 2) : 0;
+    const textW   = items.reduce((m, it) => Math.max(m, measureTextWidth(it.key, fs)), 0);
+    const titleW  = legend.title ? measureTextWidth(legend.title, fs * 1.05) : 0;
+    return {
+        fs, swatch, rowH, titleH,
+        width:  Math.max(LEGEND_PAD * 2 + swatch + LEGEND_GAP + textW, LEGEND_PAD * 2 + titleW),
+        height: LEGEND_PAD * 2 + titleH + items.length * rowH,
+    };
+};
 
 const escapeXml = (s: string) =>
     String(s).replace(/[<>&'"]/g, (c) =>
@@ -99,6 +133,10 @@ export default function CanvasArea({
     dims,
     categoryColors,
     onCategoryColorsChange,
+    backgroundColor,
+    onBackgroundColorChange,
+    legend,
+    onLegendChange,
 }: CanvasAreaProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const internalStageRef = useRef<any>(null);
@@ -182,6 +220,19 @@ export default function CanvasArea({
     const placedBooths   = useMemo(() => booths.filter(b => b.isPlaced !== false), [booths]);
     const unplacedBooths = useMemo(() => booths.filter(b => b.isPlaced === false), [booths]);
 
+    /**
+     * 凡例に載せるカテゴリ。図面に出ているものだけを、設定パネルと同じ順で並べる。
+     * まだ何も配置していないときは全カテゴリを見本として出す。
+     */
+    const legendItems = useMemo<LegendItem[]>(() => {
+        const used = new Set(placedBooths.map(b => b.category));
+        const keys = CATEGORY_PRESETS.map(p => p.key).filter(k => used.size === 0 || used.has(k));
+        return keys.map(key => ({ key, ...resolveCategoryColors(key, categoryColors) }));
+    }, [placedBooths, categoryColors]);
+
+    const legendLayout = useMemo(() => getLegendLayout(legendItems, legend), [legendItems, legend]);
+    const isLegendShown = legend.visible && legendItems.length > 0;
+
     // 壁・柱を避けるかどうか。会場の外周を「壁」で囲う描き方をしている場合は
     // 全ブースが警告になってしまうため、切り替えられるようにしてある。
     const [avoidObstacles, setAvoidObstacles] = useState(true);
@@ -230,6 +281,7 @@ export default function CanvasArea({
             include(o.x * GRID_SIZE, o.y * GRID_SIZE, o.width * GRID_SIZE, o.height * GRID_SIZE));
         textLabels.forEach(l =>
             include(l.x, l.y, Math.max(40, l.text.length * l.fontSize * 0.7), l.fontSize * 1.4));
+        if (isLegendShown) include(legend.x, legend.y, legendLayout.width, legendLayout.height);
 
         const pad = GRID_SIZE;
         return {
@@ -238,7 +290,8 @@ export default function CanvasArea({
             width:  Math.max(GRID_SIZE, maxX - minX + pad * 2),
             height: Math.max(GRID_SIZE, maxY - minY + pad * 2),
         };
-    }, [placedBooths, obstacles, textLabels, dims, venueCols, venueRows]);
+    }, [placedBooths, obstacles, textLabels, dims, venueCols, venueRows,
+        isLegendShown, legend.x, legend.y, legendLayout.width, legendLayout.height]);
 
     /** 全体が画面に収まるようズーム・位置を調整 */
     const fitToView = useCallback(() => {
@@ -276,6 +329,21 @@ export default function CanvasArea({
         });
     }, [canvasSize, stageScale, stagePos]);
 
+    /** 凡例の表示切り替え。まだ動かしていなければ会場の右外に置く。 */
+    const toggleLegend = (visible: boolean) => {
+        if (!visible) {
+            onLegendChange({ ...legend, visible: false });
+            return;
+        }
+        const isUnset = legend.x === 0 && legend.y === 0;
+        onLegendChange({
+            ...legend,
+            visible: true,
+            x: isUnset ? venueCols * GRID_SIZE + GRID_SIZE : legend.x,
+            y: isUnset ? 0 : legend.y,
+        });
+    };
+
     // === 画像（PNG）エクスポート：表示範囲ではなく全体を出力 ===
     const runExportPng = () => {
         const stage = stageRef.current;
@@ -288,11 +356,11 @@ export default function CanvasArea({
         stage.scale({ x: 1, y: 1 });
         stage.position({ x: 0, y: 0 });
 
-        // グリッド線を隠し、白背景を敷く
+        // グリッド線を隠し、背景色を敷く
         gridGroupRef.current?.visible(false);
         const bgNode = exportBgRef.current;
         if (bgNode) {
-            bgNode.setAttrs({ x: b.x, y: b.y, width: b.width, height: b.height, visible: true });
+            bgNode.setAttrs({ x: b.x, y: b.y, width: b.width, height: b.height, fill: backgroundColor, visible: true });
             bgNode.moveToBottom();
         }
         stage.batchDraw();
@@ -372,13 +440,25 @@ export default function CanvasArea({
 
         const venueSvg = `<rect x="0" y="0" width="${venueCols * GRID_SIZE}" height="${venueRows * GRID_SIZE}" fill="none" stroke="#334155" stroke-width="3" />`;
 
+        const L = legendLayout;
+        const legendSvg = !isLegendShown ? '' : `<g transform="translate(${legend.x}, ${legend.y})">
+            <rect x="0" y="0" width="${L.width}" height="${L.height}" rx="8" fill="#ffffff" fill-opacity="0.93" stroke="#94a3b8" stroke-width="1.5" />
+            ${legend.title ? `<text x="${LEGEND_PAD}" y="${LEGEND_PAD + L.titleH / 2}" font-family="sans-serif" font-size="${L.fs * 1.05}px" font-weight="bold" fill="#334155" dominant-baseline="central">${escapeXml(legend.title)}</text>` : ''}
+            ${legendItems.map((it, i) => {
+                const rowY = LEGEND_PAD + L.titleH + i * L.rowH;
+                return `<rect x="${LEGEND_PAD}" y="${rowY + (L.rowH - L.swatch) / 2}" width="${L.swatch}" height="${L.swatch}" rx="3" fill="${it.fill}" stroke="${it.stroke}" stroke-width="2" />
+            <text x="${LEGEND_PAD + L.swatch + LEGEND_GAP}" y="${rowY + L.rowH / 2}" font-family="sans-serif" font-size="${L.fs}px" fill="#334155" dominant-baseline="central">${escapeXml(it.key)}</text>`;
+            }).join('\n')}
+        </g>`;
+
         const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${b.x} ${b.y} ${b.width} ${b.height}" width="${Math.round(b.width)}" height="${Math.round(b.height)}">
-            <rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" fill="#ffffff" />
+            <rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" fill="${backgroundColor}" />
             ${bgSvg}
             ${venueSvg}
             ${obstaclesSvg}
             ${boothsSvg}
             ${textLabelsSvg}
+            ${legendSvg}
         </svg>`;
 
         const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
@@ -1370,6 +1450,18 @@ export default function CanvasArea({
                             </label>
                         </div>
 
+                        <div className="border-t border-gray-100 pt-2 flex items-center gap-2">
+                            <span className="text-xs text-gray-600 whitespace-nowrap">背景色</span>
+                            <input type="color" value={backgroundColor}
+                                onChange={(e) => onBackgroundColorChange(e.target.value)}
+                                className="w-7 h-7 rounded border border-gray-200 cursor-pointer p-0" />
+                            <span className="text-[10px] text-gray-400">図面の地色（出力にも反映）</span>
+                            {backgroundColor.toLowerCase() !== DEFAULT_BACKGROUND_COLOR && (
+                                <button className="text-[10px] text-gray-400 hover:text-red-500 ml-auto"
+                                    onClick={() => onBackgroundColorChange(DEFAULT_BACKGROUND_COLOR)}>↩</button>
+                            )}
+                        </div>
+
                         <div className="border-t border-gray-100 pt-2">
                             <p className="text-[11px] font-semibold text-gray-500 mb-2">カテゴリカラー</p>
                             {CATEGORY_PRESETS.map(({ key, def }) => (
@@ -1391,6 +1483,34 @@ export default function CanvasArea({
                                     )}
                                 </div>
                             ))}
+                        </div>
+
+                        <div className="border-t border-gray-100 pt-2 space-y-2">
+                            <label className="flex items-center gap-2 text-xs text-gray-700">
+                                <input type="checkbox" checked={legend.visible} className="w-4 h-4"
+                                    onChange={(e) => toggleLegend(e.target.checked)} />
+                                凡例を図面に置く
+                            </label>
+                            {legend.visible && (
+                                <div className="space-y-1.5 pl-1">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[11px] text-gray-600 w-10 shrink-0">見出し</span>
+                                        <input type="text" value={legend.title} placeholder="（なし）"
+                                            onChange={(e) => onLegendChange({ ...legend, title: e.target.value }, { coalesceKey: 'legend-title' })}
+                                            className="flex-1 min-w-0 border border-gray-200 rounded px-2 py-1 text-[11px] text-gray-900 bg-white" />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[11px] text-gray-600 w-10 shrink-0">文字</span>
+                                        <input type="range" min={10} max={32} step={1} value={legend.fontSize}
+                                            onChange={(e) => onLegendChange({ ...legend, fontSize: Number(e.target.value) }, { coalesceKey: 'legend-font' })}
+                                            className="flex-1 h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer" />
+                                        <span className="text-[11px] font-bold text-gray-700 w-5 text-right">{legend.fontSize}</span>
+                                    </div>
+                                    <p className="text-[10px] text-gray-400">
+                                        図面上でドラッグして移動できます。載るのは配置済みブースのカテゴリだけです。
+                                    </p>
+                                </div>
+                            )}
                         </div>
 
                         <div className="border-t border-gray-100 pt-2 text-[10px] text-gray-500 leading-relaxed">
@@ -1918,15 +2038,15 @@ export default function CanvasArea({
                     style={{ background: '#e8ecf1' }}
                 >
                     <Layer>
-                        {/* エクスポート時だけ表示する白背景 */}
-                        <Rect ref={exportBgRef} visible={false} fill="#ffffff" listening={false} />
+                        {/* エクスポート時だけ表示する背景（下地） */}
+                        <Rect ref={exportBgRef} visible={false} fill={backgroundColor} listening={false} />
 
-                        {/* 会場（白地） */}
+                        {/* 会場の地色 */}
                         <Rect
                             x={0} y={0}
                             width={venueCols * GRID_SIZE}
                             height={venueRows * GRID_SIZE}
-                            fill="#ffffff"
+                            fill={backgroundColor}
                             listening={false}
                         />
 
@@ -2054,6 +2174,52 @@ export default function CanvasArea({
                                 onDelete={() => onTextLabelsChange(textLabels.filter(l => l.id !== label.id))}
                             />
                         ))}
+
+                        {/* カテゴリカラーの凡例（ドラッグで移動、出力にも入る） */}
+                        {isLegendShown && (
+                            <Group
+                                x={legend.x} y={legend.y}
+                                draggable={!isSpacePanning && activeTool === 'none'}
+                                onDragEnd={(e) => onLegendChange({ ...legend, x: Math.round(e.target.x()), y: Math.round(e.target.y()) })}
+                            >
+                                {/* perfectDrawEnabled: 影＋塗り＋線があるとバッファキャンバス経由の
+                                    描画になり、ステージがまだ 0×0 の初回描画で落ちるため切っておく */}
+                                <Rect
+                                    width={legendLayout.width} height={legendLayout.height}
+                                    fill="rgba(255,255,255,0.93)" cornerRadius={8}
+                                    stroke="#94a3b8" strokeWidth={1.5}
+                                    shadowColor="#0f172a" shadowOpacity={0.15} shadowBlur={8} shadowOffsetY={2}
+                                    perfectDrawEnabled={false}
+                                />
+                                {legend.title && (
+                                    <Text
+                                        x={LEGEND_PAD} y={LEGEND_PAD}
+                                        height={legendLayout.titleH} verticalAlign="middle"
+                                        text={legend.title} fontSize={legendLayout.fs * 1.05}
+                                        fontStyle="bold" fill="#334155" listening={false}
+                                    />
+                                )}
+                                {legendItems.map((it, i) => {
+                                    const rowY = LEGEND_PAD + legendLayout.titleH + i * legendLayout.rowH;
+                                    return (
+                                        <React.Fragment key={it.key}>
+                                            <Rect
+                                                x={LEGEND_PAD} y={rowY + (legendLayout.rowH - legendLayout.swatch) / 2}
+                                                width={legendLayout.swatch} height={legendLayout.swatch}
+                                                fill={it.fill} stroke={it.stroke} strokeWidth={2} cornerRadius={3}
+                                                listening={false}
+                                            />
+                                            <Text
+                                                x={LEGEND_PAD + legendLayout.swatch + LEGEND_GAP} y={rowY}
+                                                height={legendLayout.rowH} verticalAlign="middle"
+                                                text={it.key} fontSize={legendLayout.fs} fill="#334155"
+                                                listening={false}
+                                            />
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </Group>
+                        )}
                     </Layer>
                 </Stage>
             </div>

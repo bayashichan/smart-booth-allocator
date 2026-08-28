@@ -97,6 +97,26 @@ export const DEFAULT_DIMENSIONS: DimensionSettings = {
 
 export type CategoryColorMap = Record<string, { stroke: string; fill: string }>;
 
+/** 図面の背景色（会場の地色。エクスポートの下地にも使う） */
+export const DEFAULT_BACKGROUND_COLOR = '#ffffff';
+
+/** 図面に置くカテゴリカラーの凡例 */
+export interface LegendConfig {
+  visible: boolean;
+  x: number;        // ピクセル座標（テキストラベルと同じ座標系）
+  y: number;
+  fontSize: number;
+  title: string;    // 空文字なら見出しを描かない
+}
+
+export const DEFAULT_LEGEND: LegendConfig = {
+  visible: false,
+  x: 0,
+  y: 0,
+  fontSize: 16,
+  title: 'カテゴリ',
+};
+
 // 保存ファイル形式
 export interface SaveFile {
   version: number;
@@ -108,4 +128,7 @@ export interface SaveFile {
   venue?: VenueSize;
   dimensions?: DimensionSettings;
   categoryColors?: CategoryColorMap;
+  // v3 以降。背景色と凡例。
+  backgroundColor?: string;
+  legend?: LegendConfig;
 }

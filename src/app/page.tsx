@@ -9,7 +9,10 @@ import {
   SaveFile,
   DimensionSettings,
   CategoryColorMap,
+  LegendConfig,
   DEFAULT_DIMENSIONS,
+  DEFAULT_BACKGROUND_COLOR,
+  DEFAULT_LEGEND,
 } from '@/types/layout';
 import {
   fetchSheet,
@@ -94,6 +97,8 @@ type Snapshot = {
   venue: { cols: number; rows: number };
   dims: DimensionSettings;
   categoryColors: CategoryColorMap;
+  backgroundColor: string;
+  legend: LegendConfig;
 };
 
 type ChangeOptions = { coalesceKey?: string };
@@ -117,6 +122,8 @@ export default function Home() {
   const [layoutRows, setLayoutRows] = useState(50);
   const [dims, setDims] = useState<DimensionSettings>(DEFAULT_DIMENSIONS);
   const [categoryColors, setCategoryColors] = useState<CategoryColorMap>({});
+  const [backgroundColor, setBackgroundColor] = useState(DEFAULT_BACKGROUND_COLOR);
+  const [legend, setLegend] = useState<LegendConfig>(DEFAULT_LEGEND);
   const [venueInputMode, setVenueInputMode] = useState<'grid' | 'mm'>('grid');
 
   const [shareUrl, setShareUrl] = useState('');
@@ -138,7 +145,7 @@ export default function Home() {
   const stateRef   = useRef<Snapshot>({
     booths, obstacles, textLabels,
     venue: { cols: layoutCols, rows: layoutRows },
-    dims, categoryColors,
+    dims, categoryColors, backgroundColor, legend,
   });
   const isRestoringRef = useRef(false);
   const lastCoalesceRef = useRef<{ key: string; at: number } | null>(null);
@@ -149,9 +156,10 @@ export default function Home() {
     stateRef.current = {
       booths, obstacles, textLabels,
       venue: { cols: layoutCols, rows: layoutRows },
-      dims, categoryColors,
+      dims, categoryColors, backgroundColor, legend,
     };
-  }, [booths, obstacles, textLabels, layoutCols, layoutRows, dims, categoryColors]);
+  }, [booths, obstacles, textLabels, layoutCols, layoutRows, dims, categoryColors,
+      backgroundColor, legend]);
 
   const applySnapshot = (s: Snapshot) => {
     isRestoringRef.current = true;
@@ -162,6 +170,8 @@ export default function Home() {
     setLayoutRows(s.venue.rows);
     setDims(s.dims);
     setCategoryColors(s.categoryColors);
+    setBackgroundColor(s.backgroundColor);
+    setLegend(s.legend);
     isRestoringRef.current = false;
   };
 
@@ -242,14 +252,25 @@ export default function Home() {
     snapshot({ coalesceKey: 'category-colors' }); setCategoryColors(v);
   }, [snapshot]);
 
+  const setBackgroundColorH = useCallback((v: string) => {
+    snapshot({ coalesceKey: 'background-color' }); setBackgroundColor(v);
+  }, [snapshot]);
+
+  const setLegendH = useCallback((v: LegendConfig, opts?: ChangeOptions) => {
+    snapshot(opts); setLegend(v);
+  }, [snapshot]);
+
   const buildSaveFile = useCallback((): SaveFile => ({
-    version: 2,
+    version: 3,
     savedAt: new Date().toISOString(),
     booths, obstacles, textLabels,
     venue: { cols: layoutCols, rows: layoutRows },
     dimensions: dims,
     categoryColors,
-  }), [booths, obstacles, textLabels, layoutCols, layoutRows, dims, categoryColors]);
+    backgroundColor,
+    legend,
+  }), [booths, obstacles, textLabels, layoutCols, layoutRows, dims, categoryColors,
+       backgroundColor, legend]);
 
   const applySaveFile = useCallback((data: SaveFile) => {
     if (data.booths)     setBooths(data.booths);
@@ -261,6 +282,9 @@ export default function Home() {
     }
     if (data.dimensions)     setDims({ ...DEFAULT_DIMENSIONS, ...data.dimensions });
     if (data.categoryColors) setCategoryColors(data.categoryColors);
+    // 背景色・凡例は v3 から。古いデータは既定値のままにする。
+    setBackgroundColor(data.backgroundColor ?? DEFAULT_BACKGROUND_COLOR);
+    setLegend({ ...DEFAULT_LEGEND, ...(data.legend ?? {}) });
   }, []);
 
   // ─── 起動時: URL パラメータ or 自動保存の復元 ─────────────────────────────
@@ -923,6 +947,10 @@ export default function Home() {
           dims={dims}
           categoryColors={categoryColors}
           onCategoryColorsChange={setCategoryColorsH}
+          backgroundColor={backgroundColor}
+          onBackgroundColorChange={setBackgroundColorH}
+          legend={legend}
+          onLegendChange={setLegendH}
         />
       </div>
     </main>

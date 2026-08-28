@@ -30,15 +30,21 @@ export const DEFAULT_CATEGORY_COLORS: Record<VendorCategory, { stroke: string; f
     'その他':               { stroke: '#6b7280', fill: '#f3f4f6' },
 };
 
+/** カテゴリの表示色を解決する（凡例・SVG エクスポートからも使う） */
+export const resolveCategoryColors = (
+    category: string,
+    categoryColors: Record<string, { stroke: string; fill: string }> = {},
+) =>
+    categoryColors[category] ??
+    DEFAULT_CATEGORY_COLORS[category as VendorCategory] ??
+    DEFAULT_CATEGORY_COLORS['その他'];
+
 /** ブースの表示色を解決する（SVG エクスポートからも使う） */
 export const resolveBoothColors = (
     booth: Booth,
     categoryColors: Record<string, { stroke: string; fill: string }> = {},
 ) => {
-    const base =
-        categoryColors[booth.category] ??
-        DEFAULT_CATEGORY_COLORS[booth.category] ??
-        DEFAULT_CATEGORY_COLORS['その他'];
+    const base = resolveCategoryColors(booth.category, categoryColors);
     return {
         stroke: booth.strokeColor ?? booth.color ?? base.stroke,
         fill:   booth.fillColor   ?? (booth.color ? booth.color + '22' : base.fill),
