@@ -35,6 +35,18 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/** URL に入れてもエスケープされない base64url（+/= を使わない）にする */
+function toBase64Url(base64: string): string {
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** base64url も旧形式の標準 base64 も受け取れるように整える */
+function fromBase64Url(encoded: string): string {
+  // URLSearchParams は + をスペースにデコードするため、元の + に戻す（旧URL対策）
+  const s = encoded.replace(/ /g, '+').replace(/-/g, '+').replace(/_/g, '/');
+  return s + '='.repeat((4 - (s.length % 4)) % 4);
+}
+
 async function encodeLayout(data: SaveFile): Promise<string> {
   const json = JSON.stringify(data);
   if (typeof CompressionStream !== 'undefined') {
@@ -43,14 +55,13 @@ async function encodeLayout(data: SaveFile): Promise<string> {
     writer.write(new TextEncoder().encode(json));
     writer.close();
     const buf = await new Response(stream.readable).arrayBuffer();
-    return bytesToBase64(new Uint8Array(buf));
+    return toBase64Url(bytesToBase64(new Uint8Array(buf)));
   }
-  return btoa(encodeURIComponent(json));
+  return toBase64Url(btoa(encodeURIComponent(json)));
 }
 
 async function decodeLayout(encoded: string): Promise<SaveFile> {
-  // URLSearchParams は + をスペースにデコードするため、元の + に戻す
-  const fixed = encoded.replace(/ /g, '+');
+  const fixed = fromBase64Url(encoded);
   const binary = atob(fixed);
   const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
   if (typeof DecompressionStream !== 'undefined' && bytes[0] === 0x1f && bytes[1] === 0x8b) {
@@ -71,8 +82,10 @@ const CanvasArea = dynamic(() => import('@/components/CanvasArea'), {
 
 const MAX_HISTORY  = 100;
 const STORAGE_KEY  = 'sba:autosave:v2';
-// これを超えたら共有用の短縮ID保存に切り替える（URL長の実用上限）
-const MAX_DATA_URL_LEN = 6000;
+// これを超えたら共有用の短縮ID保存に切り替える。
+// 8KB を超えるとリクエスト行がホスティング側のヘッダ上限に触れることがあるため、
+// 余裕を見た実用上限。
+const MAX_DATA_URL_LEN = 8000;
 
 type Snapshot = {
   booths: Booth[];
@@ -111,6 +124,7 @@ export default function Home() {
   const [loadInput, setLoadInput] = useState('');
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [savedAt, setSavedAt] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // スプレッドシート取り込み（列の対応づけダイアログ用）
   const [sheetData, setSheetData] = useState<SheetData | null>(null);
@@ -449,10 +463,9 @@ export default function Home() {
     setError('');
     try {
       const encoded = await encodeLayout(buildSaveFile());
-      const param   = encodeURIComponent(encoded);
 
-      if (param.length <= MAX_DATA_URL_LEN) {
-        const path = `/?data=${param}`;
+      if (encoded.length <= MAX_DATA_URL_LEN) {
+        const path = `/?data=${encoded}`;
         setShareUrl(`${window.location.origin}${path}`);
         window.history.replaceState({}, '', path);
         return;
@@ -466,10 +479,11 @@ export default function Home() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        const reason = typeof err.error === 'string' && /not configured|KV/i.test(err.error)
+          ? '保存先データベースが未設定です'
+          : (err.error || '短縮ID保存に失敗しました');
         throw new Error(
-          err.error
-            ? `${err.error}（レイアウトが大きく、URLに収まりません）`
-            : 'レイアウトが大きすぎて共有URLを作成できませんでした',
+          `レイアウトが大きく共有URLに収まりません（${reason}）。「💾 保存」でファイルに保存してください。`,
         );
       }
       const { id } = await res.json();
@@ -479,6 +493,39 @@ export default function Home() {
       setError(err instanceof Error ? err.message : '共有URLの作成に失敗しました');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // ─── ファイルに保存 / ファイルから読み込む ────────────────────────────────
+  // 共有URLは長さの上限があり、短縮ID保存はデータベースが要る。
+  // 大きなレイアウトでも確実に残せるよう、JSON ファイルでも入出力できるようにする。
+  const handleSaveFile = () => {
+    try {
+      const blob = new Blob([JSON.stringify(buildSaveFile(), null, 2)], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `booth-layout-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice('レイアウトをファイルに保存しました');
+    } catch {
+      setError('ファイルの保存に失敗しました');
+    }
+  };
+
+  const handleOpenFile = async (file: File) => {
+    try {
+      const data = JSON.parse(await file.text()) as SaveFile;
+      if (!Array.isArray(data.booths)) throw new Error('not a layout file');
+      snapshot();
+      applySaveFile(data);
+      // 共有URLで開いていた場合、リロードで古い状態に戻らないよう ?data= を外す
+      window.history.replaceState({}, '', '/');
+      setIsPanelOpen(false);
+      setNotice('ファイルからレイアウトを読み込みました');
+    } catch {
+      setError('ファイルを読み込めませんでした。このアプリで保存した .json を選んでください。');
     }
   };
 
@@ -534,6 +581,10 @@ export default function Home() {
             <button onClick={handleShare} disabled={isSaving}
               className={`${actionBtn} bg-blue-600 text-white active:bg-blue-700 disabled:opacity-60`}>
               {isSaving ? '作成中...' : '🔗 共有'}
+            </button>
+            <button onClick={handleSaveFile} title="レイアウトを .json ファイルに保存"
+              className={`${actionBtn} border border-gray-300 text-gray-700 active:bg-gray-100`}>
+              💾 保存
             </button>
           </div>
 
@@ -651,6 +702,30 @@ export default function Home() {
                 className="h-10 px-4 bg-indigo-600 text-white rounded active:bg-indigo-700 disabled:bg-gray-300 text-sm font-bold shrink-0">
                 読み込む
               </button>
+            </div>
+
+            {/* ファイル保存・読込（URL長やデータベースに依存しない） */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 border-t border-gray-200 pt-3">
+              <span className="text-xs text-gray-600 font-semibold w-20 shrink-0">ファイル</span>
+              <div className="flex gap-2">
+                <button onClick={handleSaveFile}
+                  className="h-10 px-4 border border-gray-300 rounded text-sm text-gray-700 active:bg-gray-100 shrink-0">
+                  💾 保存
+                </button>
+                <button onClick={() => fileInputRef.current?.click()}
+                  className="h-10 px-4 border border-gray-300 rounded text-sm text-gray-700 active:bg-gray-100 shrink-0">
+                  📂 読み込む
+                </button>
+              </div>
+              <input ref={fileInputRef} type="file" accept="application/json,.json" className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = ''; // 同じファイルを選び直しても発火するように
+                  if (file) handleOpenFile(file);
+                }} />
+              <p className="text-[11px] text-gray-500 sm:pl-1">
+                大きなレイアウトでも確実に残せます。共有URLは長さ、共有IDは90日の期限があります。
+              </p>
             </div>
 
             <p className="text-[11px] text-gray-500 border-t border-gray-200 pt-2">
