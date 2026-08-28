@@ -120,6 +120,8 @@ export interface LegendConfig {
   /** 枠ごと拡大・縮小する倍率 */
   scale: number;
   title: string;    // 空文字なら見出しを描かない
+  /** 「その他」を凡例に載せるか */
+  showOther: boolean;
 }
 
 export const DEFAULT_LEGEND: LegendConfig = {
@@ -129,6 +131,7 @@ export const DEFAULT_LEGEND: LegendConfig = {
   fontSize: 16,
   scale: 1,
   title: 'カテゴリ',
+  showOther: false,
 };
 
 // 保存ファイル形式

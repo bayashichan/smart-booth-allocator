@@ -235,12 +235,16 @@ export default function CanvasArea({
     /**
      * 凡例に載せるカテゴリ。図面に出ているものだけを、設定パネルと同じ順で並べる。
      * まだ何も配置していないときは全カテゴリを見本として出す。
+     * 「その他」は既定では載せない（設定で戻せる）。
      */
     const legendItems = useMemo<LegendItem[]>(() => {
         const used = new Set(placedBooths.map(b => b.category));
-        const keys = CATEGORY_PRESETS.map(p => p.key).filter(k => used.size === 0 || used.has(k));
+        const keys = CATEGORY_PRESETS
+            .map(p => p.key)
+            .filter(k => used.size === 0 || used.has(k))
+            .filter(k => k !== 'その他' || legend.showOther);
         return keys.map(key => ({ key, ...resolveCategoryColors(key, categoryColors) }));
-    }, [placedBooths, categoryColors]);
+    }, [placedBooths, categoryColors, legend.showOther]);
 
     const legendLayout = useMemo(() => getLegendLayout(legendItems, legend), [legendItems, legend]);
     const isLegendShown = legend.visible && legendItems.length > 0;
@@ -1568,10 +1572,20 @@ export default function CanvasArea({
                                             aria-label="凡例の倍率(%)"
                                             className="w-12 shrink-0 border border-gray-200 rounded px-1 py-1 text-[11px] text-right text-gray-900 bg-white" />
                                     </div>
+                                    <label className="flex items-center gap-2 text-[11px] text-gray-600">
+                                        <input type="checkbox" checked={legend.showOther}
+                                            onChange={(e) => onLegendChange({ ...legend, showOther: e.target.checked })} />
+                                        「その他」も載せる
+                                    </label>
                                     <p className="text-[10px] text-gray-400">
                                         図面上でドラッグして移動できます。枠の大きさは文字サイズと倍率で決まります。
                                         載るのは配置済みブースのカテゴリだけです。
                                     </p>
+                                    {legendItems.length === 0 && (
+                                        <p className="text-[10px] text-amber-600">
+                                            載せるカテゴリが無いため、凡例は表示されていません。
+                                        </p>
+                                    )}
                                 </div>
                             )}
                         </div>
