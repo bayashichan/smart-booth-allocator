@@ -21,6 +21,7 @@ import {
   type SheetData,
 } from '@/utils/csvParser';
 import { autoLayout } from '@/utils/layoutAlgorithm';
+import NumberField from '@/components/NumberField';
 
 /** 大きな配列でも落ちないよう分割して base64 化する */
 function bytesToBase64(bytes: Uint8Array): string {
@@ -469,9 +470,15 @@ export default function Home() {
     }
   };
 
-  // mm ⇔ マス 変換は共通の 1マス寸法を使う
-  const setVenueWidthMm = (mm: number) => setLayoutCols(Math.max(1, Math.round(mm / dims.gridUnitMm)));
-  const setVenueDepthMm = (mm: number) => setLayoutRows(Math.max(1, Math.round(mm / dims.gridUnitMm)));
+  // 会場サイズ（マス）と寸法(mm)の許容範囲
+  const clampCols = (n: number) => Math.min(500, Math.max(1, Math.round(n)));
+  const clampMm   = (n: number) => Math.max(10, Math.round(n));
+
+  // mm ⇔ マス 変換は共通の 1マス寸法を使う。
+  // 端数は 1マス単位に丸めるため、確定後の値が入力値と一致しないことがある
+  // （例: 1マス450mm で 1000mm → 2マス = 900mm）。
+  const setVenueWidthMm = (mm: number) => setLayoutCols(clampCols(mm / dims.gridUnitMm));
+  const setVenueDepthMm = (mm: number) => setLayoutRows(clampCols(mm / dims.gridUnitMm));
 
   const unplacedCount = booths.filter(b => b.isPlaced === false).length;
 
@@ -539,14 +546,14 @@ export default function Home() {
                 <>
                   <label className="flex items-center gap-1 text-xs text-gray-600">
                     横
-                    <input type="number" min={1} max={500} value={layoutCols}
-                      onChange={e => setLayoutCols(Math.max(1, Number(e.target.value)))}
+                    <NumberField min={1} max={500} value={layoutCols}
+                      onCommit={n => setLayoutCols(clampCols(n))}
                       className="w-16 border rounded px-1 py-1.5 text-right bg-white text-gray-900" />
                   </label>
                   <label className="flex items-center gap-1 text-xs text-gray-600">
                     縦
-                    <input type="number" min={1} max={500} value={layoutRows}
-                      onChange={e => setLayoutRows(Math.max(1, Number(e.target.value)))}
+                    <NumberField min={1} max={500} value={layoutRows}
+                      onCommit={n => setLayoutRows(clampCols(n))}
                       className="w-16 border rounded px-1 py-1.5 text-right bg-white text-gray-900" />
                   </label>
                 </>
@@ -554,15 +561,15 @@ export default function Home() {
                 <>
                   <label className="flex items-center gap-1 text-xs text-gray-600">
                     横
-                    <input type="number" min={dims.gridUnitMm} step={dims.gridUnitMm} value={layoutCols * dims.gridUnitMm}
-                      onChange={e => setVenueWidthMm(Number(e.target.value))}
+                    <NumberField min={dims.gridUnitMm} step={dims.gridUnitMm} value={layoutCols * dims.gridUnitMm}
+                      onCommit={setVenueWidthMm}
                       className="w-24 border rounded px-1 py-1.5 text-right bg-white text-gray-900" />
                     mm
                   </label>
                   <label className="flex items-center gap-1 text-xs text-gray-600">
                     縦
-                    <input type="number" min={dims.gridUnitMm} step={dims.gridUnitMm} value={layoutRows * dims.gridUnitMm}
-                      onChange={e => setVenueDepthMm(Number(e.target.value))}
+                    <NumberField min={dims.gridUnitMm} step={dims.gridUnitMm} value={layoutRows * dims.gridUnitMm}
+                      onCommit={setVenueDepthMm}
                       className="w-24 border rounded px-1 py-1.5 text-right bg-white text-gray-900" />
                     mm
                   </label>
@@ -575,19 +582,19 @@ export default function Home() {
               <span className="text-xs text-gray-600 font-semibold w-20 shrink-0">寸法</span>
               <label className="flex items-center gap-1 text-xs text-gray-600">
                 1マス
-                <input type="number" min={10} step={10} value={dims.gridUnitMm}
-                  onChange={e => setDims(d => ({ ...d, gridUnitMm: Math.max(10, Number(e.target.value)) }))}
+                <NumberField min={10} step={10} value={dims.gridUnitMm}
+                  onCommit={n => setDims(d => ({ ...d, gridUnitMm: clampMm(n) }))}
                   className="w-20 border rounded px-1 py-1.5 text-right bg-white text-gray-900" />
                 mm
               </label>
               <label className="flex items-center gap-1 text-xs text-gray-600">
                 基本卓
-                <input type="number" min={10} step={10} value={dims.baseTableWidthMm}
-                  onChange={e => setDims(d => ({ ...d, baseTableWidthMm: Math.max(10, Number(e.target.value)) }))}
+                <NumberField min={10} step={10} value={dims.baseTableWidthMm}
+                  onCommit={n => setDims(d => ({ ...d, baseTableWidthMm: clampMm(n) }))}
                   className="w-20 border rounded px-1 py-1.5 text-right bg-white text-gray-900" title="幅" />
                 ×
-                <input type="number" min={10} step={10} value={dims.baseTableDepthMm}
-                  onChange={e => setDims(d => ({ ...d, baseTableDepthMm: Math.max(10, Number(e.target.value)) }))}
+                <NumberField min={10} step={10} value={dims.baseTableDepthMm}
+                  onCommit={n => setDims(d => ({ ...d, baseTableDepthMm: clampMm(n) }))}
                   className="w-20 border rounded px-1 py-1.5 text-right bg-white text-gray-900" title="奥行" />
                 mm
               </label>
