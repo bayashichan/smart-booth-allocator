@@ -4,12 +4,14 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Stage, Layer, Line, Rect, Group, Text, Image as KonvaImage, Transformer } from 'react-konva';
 import BoothUnit, { resolveBoothColors, resolveCategoryColors } from './BoothUnit';
 import ObstacleComponent from './ObstacleComponent';
+import EntranceComponent from './EntranceComponent';
 import TextLabelComponent from './TextLabelComponent';
 import NumberField from './NumberField';
 import ColorField from './ColorField';
 import {
     Booth,
     Obstacle,
+    Entrance,
     TextLabel,
     DimensionSettings,
     CategoryColorMap,
@@ -22,6 +24,7 @@ import {
     getBoothGridBounds,
     getBoothRectOffset,
     getObstacleGridBounds,
+    getEntranceGridBounds,
     buildSnapCandidates,
     findSnap,
     rectsOverlap,
@@ -29,6 +32,19 @@ import {
     type SnapCandidate,
 } from '@/utils/boothGeometry';
 import { alignBooths, distributeBooths, arrangeInLine, type AlignKind, type Axis } from '@/utils/align';
+import {
+    DEFAULT_ENTRANCE_COLOR,
+    DEFAULT_ENTRANCE_DEPTH_MM,
+    DEFAULT_ENTRANCE_LABEL,
+    DEFAULT_ENTRANCE_WIDTH_MM,
+    MIN_ENTRANCE_MM,
+    getEntranceArrowHeadSize,
+    getEntranceArrowPoints,
+    resolveEntranceColor,
+    resolveEntranceFontSize,
+    resolveEntranceLabel,
+    resolveEntranceStrokeWidth,
+} from '@/utils/entrance';
 
 const GRID_SIZE = 40;
 /** 障害物の最小サイズ (mm) */
@@ -51,6 +67,8 @@ interface CanvasAreaProps {
     onBoothsChange: (newBooths: Booth[], opts?: ChangeOptions) => void;
     obstacles: Obstacle[];
     onObstaclesChange: (newObstacles: Obstacle[], opts?: ChangeOptions) => void;
+    entrances: Entrance[];
+    onEntrancesChange: (newEntrances: Entrance[], opts?: ChangeOptions) => void;
     textLabels: TextLabel[];
     onTextLabelsChange: (labels: TextLabel[], opts?: ChangeOptions) => void;
     stageRef?: React.RefObject<any>;
@@ -69,11 +87,11 @@ interface CanvasAreaProps {
     onLegendChange: (legend: LegendConfig, opts?: ChangeOptions) => void;
 }
 
-type ToolType = 'none' | 'wall' | 'column' | 'eraser' | 'text';
+type ToolType = 'none' | 'wall' | 'column' | 'entrance' | 'eraser' | 'text';
 
 const TOOLS_BY_MODE: Record<'booth' | 'venue', ToolType[]> = {
     booth: ['none', 'text'],
-    venue: ['none', 'wall', 'column', 'eraser', 'text'],
+    venue: ['none', 'wall', 'column', 'entrance', 'eraser', 'text'],
 };
 
 const CATEGORY_PRESETS: { key: VendorCategory; def: string }[] = [
@@ -135,6 +153,8 @@ export default function CanvasArea({
     onBoothsChange,
     obstacles,
     onObstaclesChange,
+    entrances,
+    onEntrancesChange,
     textLabels,
     onTextLabelsChange,
     stageRef: externalStageRef,
@@ -170,6 +190,12 @@ export default function CanvasArea({
     const [obstacleDimW, setObstacleDimW] = useState(1800);
     const [obstacleDimH, setObstacleDimH] = useState(450);
 
+    // 入口の描画設定（次に作る入口の既定値）
+    const [entranceColor, setEntranceColor] = useState(DEFAULT_ENTRANCE_COLOR);
+    const [entranceLabel, setEntranceLabel] = useState(DEFAULT_ENTRANCE_LABEL);
+    const [entranceDimW, setEntranceDimW] = useState(DEFAULT_ENTRANCE_WIDTH_MM);
+    const [entranceDimH, setEntranceDimH] = useState(DEFAULT_ENTRANCE_DEPTH_MM);
+
     // テキストラベル 選択・スタイル設定
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [textSettings, setTextSettings] = useState({ fontSize: 20, color: '#1f2937', fontStyle: '' });
@@ -186,6 +212,9 @@ export default function CanvasArea({
 
     // Obstacle editing state
     const [selectedObstacleId, setSelectedObstacleId] = useState<string | null>(null);
+
+    // Entrance editing state
+    const [selectedEntranceId, setSelectedEntranceId] = useState<string | null>(null);
 
     // Booth editing state
     const [selectedBoothId, setSelectedBoothId] = useState<string | null>(null);
@@ -257,20 +286,33 @@ export default function CanvasArea({
         [obstacles, avoidObstacles],
     );
 
-    /** 重なり・会場はみ出し・障害物との干渉があるブースIDを検出 */
+    // 入口をブースでふさいでいないかも警告する（不要なら切れる）
+    const [avoidEntrances, setAvoidEntrances] = useState(true);
+    const entranceRects = useMemo<GridRect[]>(
+        () => (avoidEntrances ? entrances.map(getEntranceGridBounds) : []),
+        [entrances, avoidEntrances],
+    );
+
+    /** ブースを置けない場所（壁・柱・入口）をまとめた矩形 */
+    const blockedRects = useMemo<GridRect[]>(
+        () => [...obstacleRects, ...entranceRects],
+        [obstacleRects, entranceRects],
+    );
+
+    /** 重なり・会場はみ出し・障害物や入口との干渉があるブースIDを検出 */
     const problemBoothIds = useMemo(() => {
         const bad = new Set<string>();
         const rects = placedBooths.map(b => ({ id: b.id, ...getBoothGridBounds(b, dims) }));
         for (let i = 0; i < rects.length; i++) {
             const r = rects[i];
             if (r.x < 0 || r.y < 0 || r.x + r.w > venueCols || r.y + r.h > venueRows) bad.add(r.id);
-            if (obstacleRects.some(o => rectsOverlap(r, o))) bad.add(r.id);
+            if (blockedRects.some(o => rectsOverlap(r, o))) bad.add(r.id);
             for (let j = i + 1; j < rects.length; j++) {
                 if (rectsOverlap(r, rects[j])) { bad.add(r.id); bad.add(rects[j].id); }
             }
         }
         return bad;
-    }, [placedBooths, dims, venueCols, venueRows, obstacleRects]);
+    }, [placedBooths, dims, venueCols, venueRows, blockedRects]);
 
     useEffect(() => {
         if (isBgEditing && bgNodeRef.current && bgTrRef.current) {
@@ -295,6 +337,10 @@ export default function CanvasArea({
         });
         obstacles.forEach(o =>
             include(o.x * GRID_SIZE, o.y * GRID_SIZE, o.width * GRID_SIZE, o.height * GRID_SIZE));
+        entrances.forEach(en => {
+            const g = getEntranceGridBounds(en);
+            include(g.x * GRID_SIZE, g.y * GRID_SIZE, g.w * GRID_SIZE, g.h * GRID_SIZE);
+        });
         textLabels.forEach(l =>
             include(l.x, l.y, Math.max(40, l.text.length * l.fontSize * 0.7), l.fontSize * 1.4));
         if (isLegendShown) {
@@ -309,7 +355,7 @@ export default function CanvasArea({
             width:  Math.max(GRID_SIZE, maxX - minX + pad * 2),
             height: Math.max(GRID_SIZE, maxY - minY + pad * 2),
         };
-    }, [placedBooths, obstacles, textLabels, dims, venueCols, venueRows,
+    }, [placedBooths, obstacles, entrances, textLabels, dims, venueCols, venueRows,
         isLegendShown, legend.x, legend.y, legend.scale, legendLayout.width, legendLayout.height]);
 
     /** 全体が画面に収まるようズーム・位置を調整 */
@@ -439,6 +485,31 @@ export default function CanvasArea({
             `<rect x="${obs.x * GRID_SIZE}" y="${obs.y * GRID_SIZE}" width="${obs.width * GRID_SIZE}" height="${obs.height * GRID_SIZE}" fill="none" stroke="${obs.color ?? obstacleColor}" stroke-width="${obs.strokeWidth ?? obstacleStrokeWidth}" stroke-dasharray="4 4" />`,
         ).join('\n');
 
+        const entrancesSvg = entrances.map(en => {
+            const w = en.width  * GRID_SIZE;
+            const h = en.height * GRID_SIZE;
+            const color    = resolveEntranceColor(en);
+            const strokeW  = resolveEntranceStrokeWidth(en);
+            const rot      = en.rotation ?? 0;
+            const label    = resolveEntranceLabel(en);
+            const fontSize = resolveEntranceFontSize(en, h);
+            const arrow    = getEntranceArrowPoints(w, h);
+            const head     = getEntranceArrowHeadSize(arrow.len);
+            const cx = w / 2;
+            const cy = h / 2;
+
+            // 矢印は marker を使わず三角形で描く（ビューアによる差を避ける）
+            const arrowSvg = en.showArrow === false ? '' : `
+                <line x1="${arrow.x1}" y1="${arrow.y1}" x2="${arrow.x2}" y2="${arrow.y2 - head}" stroke="${color}" stroke-width="${strokeW}" stroke-linecap="round" />
+                <polygon points="${arrow.x2},${arrow.y2} ${arrow.x2 - head / 2},${arrow.y2 - head} ${arrow.x2 + head / 2},${arrow.y2 - head}" fill="${color}" />`;
+
+            return `<g transform="translate(${en.x * GRID_SIZE}, ${en.y * GRID_SIZE}) rotate(${rot})">
+                <rect x="0" y="0" width="${w}" height="${h}" fill="${color}" fill-opacity="0.15" stroke="${color}" stroke-width="${strokeW}" rx="2" />
+                ${arrowSvg}
+                ${label ? `<text x="${cx}" y="${cy}" font-family="sans-serif" font-size="${fontSize}px" font-weight="bold" fill="${color}" text-anchor="middle" dominant-baseline="central" transform="rotate(${-rot}, ${cx}, ${cy})">${escapeXml(label)}</text>` : ''}
+            </g>`;
+        }).join('\n');
+
         const textLabelsSvg = textLabels.map(l => {
             const fontStyle = l.fontStyle || '';
             const fw = fontStyle.includes('bold')   ? 'bold'   : 'normal';
@@ -476,6 +547,7 @@ export default function CanvasArea({
             ${bgSvg}
             ${venueSvg}
             ${obstaclesSvg}
+            ${entrancesSvg}
             ${boothsSvg}
             ${textLabelsSvg}
             ${legendSvg}
@@ -498,6 +570,7 @@ export default function CanvasArea({
         setSelectedBoothId(null);
         setSelectedBoothIds(new Set());
         setSelectedObstacleId(null);
+        setSelectedEntranceId(null);
         setSelectedTextId(null);
     };
 
@@ -556,6 +629,7 @@ export default function CanvasArea({
         setActiveTool(prev => (TOOLS_BY_MODE[mode].includes(prev) ? prev : 'none'));
         if (mode === 'booth') {
             setSelectedObstacleId(null);
+            setSelectedEntranceId(null);
             setIsBgEditing(false);
             setIsCalibrating(false);
             setCalibrationPoints([]);
@@ -656,13 +730,13 @@ export default function CanvasArea({
         if (!moving) return false;
         const rect = getBoothGridBounds({ ...moving, x: newX, y: newY }, dims);
         if (rect.x < 0 || rect.y < 0 || rect.x + rect.w > venueCols || rect.y + rect.h > venueRows) return true;
-        if (obstacleRects.some(o => rectsOverlap(rect, o))) return true;
+        if (blockedRects.some(o => rectsOverlap(rect, o))) return true;
         return boothList.some(b =>
             b.id !== movingId &&
             b.isPlaced !== false &&
             rectsOverlap(rect, getBoothGridBounds(b, dims)),
         );
-    }, [dims, venueCols, venueRows, obstacleRects]);
+    }, [dims, venueCols, venueRows, blockedRects]);
 
     // --- 重ならない最近傍グリッドを探す（新規追加・トレイからの配置で使用） ---
     const findFreePosition = useCallback((movingId: string, preferX: number, preferY: number, boothList: Booth[]) => {
@@ -728,6 +802,7 @@ export default function CanvasArea({
                 setSelectedBoothId(null);
                 setSelectedBoothIds(new Set());
                 setSelectedObstacleId(null);
+                setSelectedEntranceId(null);
                 setSelectedTextId(null);
                 return;
             }
@@ -747,6 +822,9 @@ export default function CanvasArea({
                 } else if (mode === 'venue' && selectedObstacleId) {
                     onObstaclesChange(obstacles.filter(o => o.id !== selectedObstacleId));
                     setSelectedObstacleId(null);
+                } else if (mode === 'venue' && selectedEntranceId) {
+                    onEntrancesChange(entrances.filter(en => en.id !== selectedEntranceId));
+                    setSelectedEntranceId(null);
                 } else if (selectedTextId) {
                     onTextLabelsChange(textLabels.filter(t => t.id !== selectedTextId));
                     setSelectedTextId(null);
@@ -871,6 +949,57 @@ export default function CanvasArea({
         });
     };
 
+    // --- Entrance Logic ---
+    const findEntranceAt = (gx: number, gy: number) =>
+        entrances.find(en =>
+            gx >= en.x && gx < en.x + en.width &&
+            gy >= en.y && gy < en.y + en.height);
+
+    const handleEntranceChange = (updated: Entrance, opts?: ChangeOptions) => {
+        onEntrancesChange(entrances.map(en => en.id === updated.id ? updated : en), opts);
+    };
+
+    const selectedEntrance = entrances.find(en => en.id === selectedEntranceId) ?? null;
+
+    /** 入口の実寸 (mm)。内部はマス単位で持つので端数もそのまま扱える */
+    const getEntranceSizeMm = (en: Entrance) => ({
+        width:  Math.round(en.width  * dims.gridUnitMm),
+        height: Math.round(en.height * dims.gridUnitMm),
+    });
+
+    /** mm 指定で入口のサイズを更新する（マス目の倍数でなくてよい） */
+    const updateEntranceSizeMm = (en: Entrance, widthMm: number, heightMm: number) => {
+        handleEntranceChange({
+            ...en,
+            width:  Math.max(MIN_ENTRANCE_MM, widthMm)  / dims.gridUnitMm,
+            height: Math.max(MIN_ENTRANCE_MM, heightMm) / dims.gridUnitMm,
+        });
+    };
+
+    /** 入口を1つ作る。位置はグリッド座標、サイズはマス単位。 */
+    const createEntrance = (x: number, y: number, width: number, height: number): Entrance => ({
+        id: `ent-${Date.now()}`,
+        x, y, width, height,
+        rotation: 0,
+        label: entranceLabel,
+        color: entranceColor,
+        showArrow: true,
+    });
+
+    const addEntranceAtViewCenter = () => {
+        const center = getViewCenterGrid();
+        const ent = createEntrance(
+            center.x, center.y,
+            // 指定した mm をそのまま使う（マス目の倍数に丸めない）
+            Math.max(MIN_ENTRANCE_MM, entranceDimW) / dims.gridUnitMm,
+            Math.max(MIN_ENTRANCE_MM, entranceDimH) / dims.gridUnitMm,
+        );
+        onEntrancesChange([...entrances, ent]);
+        // 作った直後に名前や向きを直せるよう、選択したうえで移動ツールに戻す
+        setActiveTool('none');
+        setSelectedEntranceId(ent.id);
+    };
+
     /** マス表示用: 2.67 のような端数を読みやすく丸める */
     const formatGrid = (n: number) => String(Math.round(n * 100) / 100);
 
@@ -883,6 +1012,8 @@ export default function CanvasArea({
     const handleEraser = (gx: number, gy: number) => {
         const existingObs = findObstacleAt(gx, gy);
         if (existingObs) onObstaclesChange(obstacles.filter(o => o.id !== existingObs.id));
+        const existingEnt = findEntranceAt(gx, gy);
+        if (existingEnt) onEntrancesChange(entrances.filter(en => en.id !== existingEnt.id));
     };
 
     const handleMouseDown = (e: any) => {
@@ -909,6 +1040,7 @@ export default function CanvasArea({
         if (clickedOnStage) {
             setSelectedBoothId(null);
             setSelectedObstacleId(null);
+            setSelectedEntranceId(null);
             setSelectedTextId(null);
 
             if (activeTool === 'text') {
@@ -977,6 +1109,7 @@ export default function CanvasArea({
 
         if (mode === 'venue' && activeTool === 'none') {
             setSelectedObstacleId(null);
+            setSelectedEntranceId(null);
             return;
         }
 
@@ -1072,16 +1205,25 @@ export default function CanvasArea({
         }
 
         if (isPaintingRef.current && mode === 'venue' && activeTool !== 'eraser' && previewRect) {
-            const obstacleType = (activeTool === 'wall' || activeTool === 'column') ? activeTool : 'wall';
-            onObstaclesChange([...obstacles, {
-                id: `obs-${Date.now()}`,
-                x: previewRect.x, y: previewRect.y,
-                width: previewRect.w, height: previewRect.h,
-                rotation: 0,
-                type: obstacleType,
-                color: obstacleColor,
-                strokeWidth: obstacleStrokeWidth,
-            }]);
+            if (activeTool === 'entrance') {
+                const ent = createEntrance(previewRect.x, previewRect.y, previewRect.w, previewRect.h);
+                onEntrancesChange([...entrances, ent]);
+                // 壁・柱と違って続けて何個も置くものではないので、
+                // 作った直後に名前や向きを直せるよう選択して移動ツールに戻す
+                setActiveTool('none');
+                setSelectedEntranceId(ent.id);
+            } else {
+                const obstacleType = (activeTool === 'wall' || activeTool === 'column') ? activeTool : 'wall';
+                onObstaclesChange([...obstacles, {
+                    id: `obs-${Date.now()}`,
+                    x: previewRect.x, y: previewRect.y,
+                    width: previewRect.w, height: previewRect.h,
+                    rotation: 0,
+                    type: obstacleType,
+                    color: obstacleColor,
+                    strokeWidth: obstacleStrokeWidth,
+                }]);
+            }
         }
 
         isPaintingRef.current = false;
@@ -1250,7 +1392,7 @@ export default function CanvasArea({
             .map(b => getBoothGridBounds(b, dims));
         snapRef.current = buildSnapCandidates(
             getBoothGridBounds(self, dims),
-            [...others, ...obstacleRects],
+            [...others, ...obstacleRects, ...entranceRects],
             { cols: venueCols, rows: venueRows },
         );
     };
@@ -1489,6 +1631,16 @@ export default function CanvasArea({
                                     </span>
                                 </span>
                             </label>
+                            <label className="flex items-start gap-2 text-xs text-gray-700">
+                                <input type="checkbox" checked={avoidEntrances}
+                                    onChange={(e) => setAvoidEntrances(e.target.checked)} className="w-4 h-4 mt-0.5" />
+                                <span>
+                                    入口をふさぐブースを警告
+                                    <span className="block text-[10px] text-gray-400">
+                                        入口の上にブースを置くと赤くなります
+                                    </span>
+                                </span>
+                            </label>
                         </div>
 
                         <div className="border-t border-gray-100 pt-2">
@@ -1608,6 +1760,7 @@ export default function CanvasArea({
                                 { tool: 'none'   as ToolType, label: '移動',     ring: 'bg-gray-200 ring-gray-300' },
                                 { tool: 'wall'   as ToolType, label: '壁ペン',   ring: 'bg-orange-100 ring-orange-300' },
                                 { tool: 'column' as ToolType, label: '柱ペン',   ring: 'bg-orange-100 ring-orange-300' },
+                                { tool: 'entrance' as ToolType, label: '入口',   ring: 'bg-teal-100 ring-teal-300' },
                                 { tool: 'eraser' as ToolType, label: '消しゴム', ring: 'bg-red-100 ring-red-300' },
                                 { tool: 'text'   as ToolType, label: 'テキスト', ring: 'bg-purple-100 ring-purple-300' },
                             ]).map(({ tool, label, ring }) => (
@@ -1671,6 +1824,36 @@ export default function CanvasArea({
                                         }]);
                                     }}
                                 >画面中央に配置 ({obstacleDimW}×{obstacleDimH}mm)</button>
+                            </div>
+                        )}
+
+                        {activeTool === 'entrance' && (
+                            <div className="w-full border-t border-gray-100 pt-2 flex flex-col gap-2 px-1">
+                                <div className="flex items-center gap-2">
+                                    <input type="color" value={entranceColor} onChange={(e) => setEntranceColor(e.target.value)}
+                                        className="w-8 h-8 rounded border border-gray-200 cursor-pointer p-0.5" title="入口の色" />
+                                    <input type="text" value={entranceLabel} onChange={(e) => setEntranceLabel(e.target.value)}
+                                        placeholder="入口"
+                                        className="flex-1 min-w-0 border rounded px-2 py-1 text-xs text-gray-800" title="図面に書く文字" />
+                                </div>
+                                <div className="flex items-center gap-1">
+                                    <label className="text-[10px] text-gray-500">W</label>
+                                    <NumberField min={MIN_ENTRANCE_MM} step={10} value={entranceDimW}
+                                        onCommit={(n) => setEntranceDimW(Math.max(MIN_ENTRANCE_MM, Math.round(n)))}
+                                        className="w-16 border rounded px-1 py-1 text-xs text-gray-800" />
+                                    <label className="text-[10px] text-gray-500">H</label>
+                                    <NumberField min={MIN_ENTRANCE_MM} step={10} value={entranceDimH}
+                                        onCommit={(n) => setEntranceDimH(Math.max(MIN_ENTRANCE_MM, Math.round(n)))}
+                                        className="w-16 border rounded px-1 py-1 text-xs text-gray-800" />
+                                    <span className="text-[10px] text-gray-400">mm</span>
+                                </div>
+                                <button
+                                    className="text-[11px] bg-teal-50 active:bg-teal-100 text-teal-700 rounded py-1.5 px-2 font-medium"
+                                    onClick={addEntranceAtViewCenter}
+                                >画面中央に配置 ({entranceDimW}×{entranceDimH}mm)</button>
+                                <p className="text-[10px] text-gray-400">
+                                    ドラッグした範囲が入口になります。置いたあとは設定パネルで名前や向きを変えられます。
+                                </p>
                             </div>
                         )}
 
@@ -2049,6 +2232,130 @@ export default function CanvasArea({
                 </div>
             )}
 
+            {/* ── 選択中の入口パネル（会場編集モード） ─────────────────── */}
+            {selectedEntrance && mode === 'venue' && activeTool === 'none' && !isBgEditing && (
+                <div className={panelClass}>
+                    <div className="flex justify-between items-center mb-2 border-b pb-2">
+                        <h3 className="font-bold text-gray-900">入口の設定</h3>
+                        <button onClick={() => setSelectedEntranceId(null)}
+                            className="w-8 h-8 shrink-0 text-gray-400 active:text-gray-700">✕</button>
+                    </div>
+
+                    <div className="space-y-3">
+                        <div>
+                            <label className="text-xs text-gray-700 block mb-1">表示する文字</label>
+                            <input type="text"
+                                value={resolveEntranceLabel(selectedEntrance)}
+                                placeholder="入口"
+                                onChange={(e) => handleEntranceChange(
+                                    { ...selectedEntrance, label: e.target.value },
+                                    { coalesceKey: `entrance-label-${selectedEntrance.id}` })}
+                                className="w-full border rounded px-2 py-2 text-sm text-gray-900 bg-white" />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="text-xs text-gray-700 block mb-1">幅 (mm)</label>
+                                <NumberField min={MIN_ENTRANCE_MM} step={10}
+                                    value={getEntranceSizeMm(selectedEntrance).width}
+                                    onCommit={(n) => updateEntranceSizeMm(
+                                        selectedEntrance, n, getEntranceSizeMm(selectedEntrance).height)}
+                                    className="w-full border rounded px-2 py-2 text-sm text-gray-900 bg-white" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-700 block mb-1">高さ (mm)</label>
+                                <NumberField min={MIN_ENTRANCE_MM} step={10}
+                                    value={getEntranceSizeMm(selectedEntrance).height}
+                                    onCommit={(n) => updateEntranceSizeMm(
+                                        selectedEntrance, getEntranceSizeMm(selectedEntrance).width, n)}
+                                    className="w-full border rounded px-2 py-2 text-sm text-gray-900 bg-white" />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="text-xs text-gray-700 block mb-1">
+                                文字サイズ (px)
+                                <span className="text-[10px] text-gray-400 ml-1">
+                                    文字が枠に収まらないときに小さくします
+                                </span>
+                            </label>
+                            <div className="flex items-center gap-2">
+                                <NumberField min={4} max={200} step={1}
+                                    value={Math.round(resolveEntranceFontSize(
+                                        selectedEntrance, selectedEntrance.height * GRID_SIZE))}
+                                    onCommit={(n) => handleEntranceChange(
+                                        { ...selectedEntrance, fontSize: clampFontSize(n) },
+                                        { coalesceKey: `entrance-font-${selectedEntrance.id}` })}
+                                    className="w-20 border rounded px-2 py-2 text-sm text-gray-900 bg-white" />
+                                {selectedEntrance.fontSize !== undefined && (
+                                    <button
+                                        onClick={() => {
+                                            const next = { ...selectedEntrance };
+                                            delete next.fontSize;
+                                            handleEntranceChange(next);
+                                        }}
+                                        title="枠の大きさに合わせる（自動）"
+                                        className="text-[11px] text-gray-500 active:text-gray-800 px-1">↩ 自動</button>
+                                )}
+                            </div>
+                        </div>
+
+                        <ColorField
+                            label="色（枠線・矢印・文字）"
+                            value={resolveEntranceColor(selectedEntrance)}
+                            onChange={(color) => handleEntranceChange(
+                                { ...selectedEntrance, color },
+                                { coalesceKey: `entrance-color-${selectedEntrance.id}` })}
+                            onReset={selectedEntrance.color && selectedEntrance.color !== DEFAULT_ENTRANCE_COLOR
+                                ? () => handleEntranceChange({ ...selectedEntrance, color: DEFAULT_ENTRANCE_COLOR })
+                                : undefined}
+                        />
+
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => handleEntranceChange({
+                                    ...selectedEntrance,
+                                    rotation: (((selectedEntrance.rotation ?? 0) + 90) % 360),
+                                })}
+                                className="flex-1 py-2.5 bg-teal-50 active:bg-teal-100 text-teal-700 rounded-lg text-xs font-medium">
+                                ↻ 90°回転（{selectedEntrance.rotation ?? 0}°）
+                            </button>
+                            <label className="flex items-center gap-1.5 text-[11px] text-gray-700 shrink-0">
+                                <input type="checkbox" checked={selectedEntrance.showArrow !== false}
+                                    onChange={(e) => handleEntranceChange(
+                                        { ...selectedEntrance, showArrow: e.target.checked })}
+                                    className="w-4 h-4" />
+                                矢印
+                            </label>
+                        </div>
+
+                        <button
+                            onClick={() => handleEntranceChange({
+                                ...selectedEntrance,
+                                width:  Math.max(1, Math.round(selectedEntrance.width)),
+                                height: Math.max(1, Math.round(selectedEntrance.height)),
+                            })}
+                            className="w-full py-2.5 bg-gray-50 active:bg-gray-100 text-gray-600 rounded-lg text-xs font-medium">
+                            マス目に合わせる
+                        </button>
+
+                        <button
+                            onClick={() => {
+                                onEntrancesChange(entrances.filter(en => en.id !== selectedEntrance.id));
+                                setSelectedEntranceId(null);
+                            }}
+                            className="w-full py-2.5 bg-red-50 active:bg-red-100 text-red-700 rounded-lg text-sm font-medium">
+                            🗑 削除
+                        </button>
+
+                        <p className="text-[11px] text-gray-500">
+                            {formatGrid(selectedEntrance.width)}×{formatGrid(selectedEntrance.height)}マス
+                            （1マス {dims.gridUnitMm}mm）。矢印は会場へ入る向きを表します。
+                        </p>
+                    </div>
+                </div>
+            )}
+
             {/* ── AI解析パネル（会場編集モード） ────────────────────────── */}
             {mode === 'venue' && bgImage && (
                 <div className="absolute bottom-3 right-2 z-20 bg-white rounded-xl shadow-lg border border-blue-100 overflow-hidden w-40">
@@ -2110,6 +2417,7 @@ export default function CanvasArea({
                         : isCalibrating ? (calibrationPoints.length === 0 ? '始点をクリック' : '終点をクリック')
                         : isBgEditing ? '下絵を調整中：グリッドに合わせてください'
                         : activeTool === 'text' ? 'キャンバスをタップしてテキストを追加'
+                        : activeTool === 'entrance' ? 'ドラッグした範囲が入口になります'
                         : activeTool !== 'none' ? 'ドラッグでなぞると連続配置'
                         : '移動モード'}
                 </div>
@@ -2199,15 +2507,38 @@ export default function CanvasArea({
                                 gridPixelSize={GRID_SIZE}
                                 isSelected={selectedObstacleId === obs.id}
                                 isEditable={mode === 'venue' && activeTool === 'none' && !isBgEditing && !isSpacePanning}
-                                onSelect={() => { if (mode === 'venue' && activeTool === 'none' && !isBgEditing) setSelectedObstacleId(obs.id); }}
+                                onSelect={() => {
+                                    if (mode === 'venue' && activeTool === 'none' && !isBgEditing) {
+                                        setSelectedObstacleId(obs.id);
+                                        setSelectedEntranceId(null);
+                                    }
+                                }}
                                 onChange={handleObstacleChange}
+                            />
+                        ))}
+                        {entrances.map(en => (
+                            <EntranceComponent
+                                key={en.id}
+                                data={en}
+                                gridPixelSize={GRID_SIZE}
+                                isSelected={selectedEntranceId === en.id}
+                                isEditable={mode === 'venue' && activeTool === 'none' && !isBgEditing && !isSpacePanning}
+                                onSelect={() => {
+                                    if (mode === 'venue' && activeTool === 'none' && !isBgEditing) {
+                                        setSelectedEntranceId(en.id);
+                                        setSelectedObstacleId(null);
+                                    }
+                                }}
+                                onChange={handleEntranceChange}
                             />
                         ))}
                         {previewRect && (
                             <Rect
                                 x={previewRect.x * GRID_SIZE} y={previewRect.y * GRID_SIZE}
                                 width={previewRect.w * GRID_SIZE} height={previewRect.h * GRID_SIZE}
-                                fill="transparent" stroke={obstacleColor} strokeWidth={obstacleStrokeWidth}
+                                fill={activeTool === 'entrance' ? `${entranceColor}26` : 'transparent'}
+                                stroke={activeTool === 'entrance' ? entranceColor : obstacleColor}
+                                strokeWidth={activeTool === 'entrance' ? 3 : obstacleStrokeWidth}
                                 opacity={0.7} dash={[4, 4]}
                             />
                         )}

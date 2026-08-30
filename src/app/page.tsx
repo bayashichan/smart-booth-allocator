@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import {
   Booth,
   Obstacle,
+  Entrance,
   TextLabel,
   SaveFile,
   DimensionSettings,
@@ -94,6 +95,7 @@ const MAX_DATA_URL_LEN = 8000;
 type Snapshot = {
   booths: Booth[];
   obstacles: Obstacle[];
+  entrances: Entrance[];
   textLabels: TextLabel[];
   venue: { cols: number; rows: number };
   dims: DimensionSettings;
@@ -116,6 +118,7 @@ export default function Home() {
     { id: '2', name: 'サンプルB', size: 2.0, category: '飲食', preferences: { wall: false }, x: 8, y: 2, rotation: 0, isPlaced: true },
   ]);
   const [obstacles,  setObstacles]  = useState<Obstacle[]>([]);
+  const [entrances,  setEntrances]  = useState<Entrance[]>([]);
   const [textLabels, setTextLabels] = useState<TextLabel[]>([]);
   const [mode,       setMode]       = useState<'booth' | 'venue'>('booth');
 
@@ -146,7 +149,7 @@ export default function Home() {
   const historyRef = useRef<Snapshot[]>([]);
   const redoRef    = useRef<Snapshot[]>([]);
   const stateRef   = useRef<Snapshot>({
-    booths, obstacles, textLabels,
+    booths, obstacles, entrances, textLabels,
     venue: { cols: layoutCols, rows: layoutRows },
     dims, categoryColors, backgroundColor, legend, seatFontSize,
   });
@@ -157,17 +160,18 @@ export default function Home() {
 
   useEffect(() => {
     stateRef.current = {
-      booths, obstacles, textLabels,
+      booths, obstacles, entrances, textLabels,
       venue: { cols: layoutCols, rows: layoutRows },
       dims, categoryColors, backgroundColor, legend, seatFontSize,
     };
-  }, [booths, obstacles, textLabels, layoutCols, layoutRows, dims, categoryColors,
+  }, [booths, obstacles, entrances, textLabels, layoutCols, layoutRows, dims, categoryColors,
       backgroundColor, legend, seatFontSize]);
 
   const applySnapshot = (s: Snapshot) => {
     isRestoringRef.current = true;
     setBooths(s.booths);
     setObstacles(s.obstacles);
+    setEntrances(s.entrances);
     setTextLabels(s.textLabels);
     setLayoutCols(s.venue.cols);
     setLayoutRows(s.venue.rows);
@@ -248,6 +252,10 @@ export default function Home() {
     snapshot(opts); setObstacles(v);
   }, [snapshot]);
 
+  const setEntrancesH = useCallback((v: Entrance[], opts?: ChangeOptions) => {
+    snapshot(opts); setEntrances(v);
+  }, [snapshot]);
+
   const setTextLabelsH = useCallback((v: TextLabel[], opts?: ChangeOptions) => {
     snapshot(opts); setTextLabels(v);
   }, [snapshot]);
@@ -269,22 +277,25 @@ export default function Home() {
   }, [snapshot]);
 
   const buildSaveFile = useCallback((): SaveFile => ({
-    version: 3,
+    version: 4,
     savedAt: new Date().toISOString(),
     booths, obstacles, textLabels,
+    entrances,
     venue: { cols: layoutCols, rows: layoutRows },
     dimensions: dims,
     categoryColors,
     backgroundColor,
     legend,
     boothFontSize: seatFontSize,
-  }), [booths, obstacles, textLabels, layoutCols, layoutRows, dims, categoryColors,
+  }), [booths, obstacles, entrances, textLabels, layoutCols, layoutRows, dims, categoryColors,
        backgroundColor, legend, seatFontSize]);
 
   const applySaveFile = useCallback((data: SaveFile) => {
     if (data.booths)     setBooths(data.booths);
     if (data.obstacles)  setObstacles(data.obstacles);
     if (data.textLabels) setTextLabels(data.textLabels);
+    // 入口は v4 から。古いデータには無いので空にする。
+    setEntrances(data.entrances ?? []);
     if (data.venue) {
       setLayoutCols(data.venue.cols);
       setLayoutRows(data.venue.rows);
@@ -476,7 +487,7 @@ export default function Home() {
       const response = await fetch('/api/generate-layout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ booths, obstacles, width: layoutCols, height: layoutRows }),
+        body: JSON.stringify({ booths, obstacles, entrances, width: layoutCols, height: layoutRows }),
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
@@ -953,6 +964,8 @@ export default function Home() {
           onBoothsChange={setBoothsH}
           obstacles={obstacles}
           onObstaclesChange={setObstaclesH}
+          entrances={entrances}
+          onEntrancesChange={setEntrancesH}
           textLabels={textLabels}
           onTextLabelsChange={setTextLabelsH}
           mode={mode}

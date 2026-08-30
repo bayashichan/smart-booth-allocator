@@ -1,4 +1,4 @@
-import { Booth, Obstacle, DimensionSettings } from '@/types/layout';
+import { Booth, Obstacle, Entrance, DimensionSettings } from '@/types/layout';
 
 export interface GridRect { x: number; y: number; w: number; h: number }
 
@@ -51,26 +51,28 @@ export const getBoothRectOffset = (rotation: number, widthPx: number, heightPx: 
 export const rectsOverlap = (a: GridRect, b: GridRect) =>
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
+/** 左上を原点に回転する矩形（障害物・入口）の共通形 */
+type RotatedBox = { x: number; y: number; width: number; height: number; rotation?: number };
+
 /**
- * 障害物の占有矩形（グリッド単位）。
- * 障害物も原点回転するため、回転している場合は 4隅から
- * 軸平行の外接矩形を求めて安全側で扱う。
+ * 左上原点で回転する矩形の占有範囲（グリッド単位）。
+ * 回転している場合は 4隅から軸平行の外接矩形を求めて安全側で扱う。
  */
-export const getObstacleGridBounds = (obs: Obstacle): GridRect => {
-    const rot = ((obs.rotation ?? 0) % 360 + 360) % 360;
-    if (rot === 0) return { x: obs.x, y: obs.y, w: obs.width, h: obs.height };
+const getRotatedBoxGridBounds = (box: RotatedBox): GridRect => {
+    const rot = ((box.rotation ?? 0) % 360 + 360) % 360;
+    if (rot === 0) return { x: box.x, y: box.y, w: box.width, h: box.height };
 
     const rad = (rot * Math.PI) / 180;
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
     const corners = [
         [0, 0],
-        [obs.width, 0],
-        [obs.width, obs.height],
-        [0, obs.height],
+        [box.width, 0],
+        [box.width, box.height],
+        [0, box.height],
     ].map(([cx, cy]) => ({
-        x: obs.x + cx * cos - cy * sin,
-        y: obs.y + cx * sin + cy * cos,
+        x: box.x + cx * cos - cy * sin,
+        y: box.y + cx * sin + cy * cos,
     }));
 
     const xs = corners.map(c => c.x);
@@ -79,6 +81,12 @@ export const getObstacleGridBounds = (obs: Obstacle): GridRect => {
     const minY = Math.min(...ys), maxY = Math.max(...ys);
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 };
+
+/** 障害物の占有矩形（グリッド単位） */
+export const getObstacleGridBounds = (obs: Obstacle): GridRect => getRotatedBoxGridBounds(obs);
+
+/** 入口の占有矩形（グリッド単位）。ブースでふさがないための判定に使う。 */
+export const getEntranceGridBounds = (ent: Entrance): GridRect => getRotatedBoxGridBounds(ent);
 
 /**
  * ドラッグ中のブースを他のブース・会場端に吸着させるための候補位置。

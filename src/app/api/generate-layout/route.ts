@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Booth, Obstacle } from '@/types/layout';
+import { Booth } from '@/types/layout';
 
 // APIキーは環境変数から取得 (後ほど設定)
 const API_KEY = process.env.GEMINI_API_KEY || '';
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
 
     try {
         const body = await req.json();
-        const { booths, obstacles, width, height } = body;
+        const { booths, obstacles, entrances, width, height } = body;
 
         // AIへの入力プロンプト構築
         const prompt = `
@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
     - Width: ${width} grids
     - Height: ${height} grids
     - Obstacles (Walls/Columns): ${JSON.stringify(obstacles)}
+    - Entrances (doorways; keep them clear so visitors can walk in): ${JSON.stringify(entrances ?? [])}
 
     # Input Booths
     ${JSON.stringify(booths.map((b: Booth) => ({
@@ -38,9 +39,10 @@ export async function POST(req: NextRequest) {
     1. "wall: true" preference booths MUST be placed along the outer edges or near obstacles.
     2. Group similar "categories" together (e.g., place "Food" booths near each other).
     3. Ensure at least 3 grids of aisle space between booths.
-    4. Do not overlap with obstacles or other booths.
-    5. Booth orientation (rotation) can be 0, 90, 180, 270.
-    6. CRITICAL: All booths MUST be placed strictly within the venue bounds (0 <= x < ${width} and 0 <= y < ${height}). Do NOT place any booth outside this area.
+    4. Do not overlap with obstacles, entrances, or other booths.
+    5. Never block an entrance: leave at least 2 grids of open space in front of each entrance, and place booths with "nearEntrance: true" close to one (without blocking it).
+    6. Booth orientation (rotation) can be 0, 90, 180, 270.
+    7. CRITICAL: All booths MUST be placed strictly within the venue bounds (0 <= x < ${width} and 0 <= y < ${height}). Do NOT place any booth outside this area.
 
     # Output Format
     Return ONLY a valid JSON array of objects. No markdown formatting.

@@ -54,10 +54,18 @@ export interface Obstacle {
 
 export interface Entrance {
   id: string;
-  x: number;
-  y: number;
-  width: number;
+  x: number;      // グリッド座標 X（左上基準）
+  y: number;      // グリッド座標 Y
+  width: number;  // グリッド単位（端数可）
   height: number;
+  /** 進入方向。0 = 下向き（上側の壁から会場へ入る） */
+  rotation?: number;
+  label?: string;       // 図面に書く文字。未指定なら「入口」
+  color?: string;       // 枠線・矢印の色
+  strokeWidth?: number; // 線の太さ (px)
+  fontSize?: number;    // 文字サイズ (px)。未指定なら枠の大きさから自動
+  /** 進入方向の矢印を描くか。未指定なら描く */
+  showArrow?: boolean;
 }
 
 export interface LayoutState {
@@ -150,4 +158,6 @@ export interface SaveFile {
   legend?: LegendConfig;
   // ブース文字サイズの全体設定
   boothFontSize?: number;
+  // v4 以降。入口。古いデータには存在しないため任意。
+  entrances?: Entrance[];
 }
